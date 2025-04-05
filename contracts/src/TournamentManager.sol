@@ -621,5 +621,3 @@ contract TournamentManager is Ownable, ReentrancyGuardTransient {
      */
     receive() external payable {}
 }
-
-
