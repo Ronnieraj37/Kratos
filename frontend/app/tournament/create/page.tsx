@@ -1,20 +1,20 @@
-'use client';
+"use client";
 
 import React, { useState } from "react";
 import Link from "next/link";
 import { motion } from "framer-motion";
-import { 
-  CalendarIcon, 
-  Clock, 
-  DollarSign, 
-  Users, 
-  ChevronLeft, 
-  Trophy, 
+import {
+  CalendarIcon,
+  Clock,
+  DollarSign,
+  Users,
+  ChevronLeft,
+  Trophy,
   Wallet,
   Info,
   CheckCircle,
   AlertCircle,
-  ArrowRight
+  ArrowRight,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -34,8 +34,15 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { useAccount, useWriteContract } from "wagmi";
+import { TOURNAMENT_MANAGER_ADDRESS } from "@/app/constants";
+import { TournamentManagerABI } from "@/app/contract/abi/TournamentManager";
+import { baseSepolia } from "viem/chains";
+import { parseUnits } from "viem";
 
 export default function CreateTournamentPage() {
+  const { address } = useAccount();
+  const { writeContractAsync } = useWriteContract();
   const [formData, setFormData] = useState({
     name: "",
     entryFee: "",
@@ -45,12 +52,12 @@ export default function CreateTournamentPage() {
     startTime: "",
     duration: "2", // Default 2 hours
   });
-  
+
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [submitted, setSubmitted] = useState(false);
   const [tokenType, setTokenType] = useState("eth");
-  
+
   const durationOptions = [
     { value: "1", label: "1 hour" },
     { value: "2", label: "2 hours" },
@@ -61,10 +68,12 @@ export default function CreateTournamentPage() {
     { value: "24", label: "24 hours" },
   ];
 
-  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+  const handleInputChange = (
+    e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>
+  ) => {
     const { name, value } = e.target;
     setFormData((prev) => ({ ...prev, [name]: value }));
-    
+
     // Clear error for this field when user types
     if (errors[name]) {
       setErrors((prev) => {
@@ -77,7 +86,7 @@ export default function CreateTournamentPage() {
 
   const handleSelectChange = (name: string, value: string) => {
     setFormData((prev) => ({ ...prev, [name]: value }));
-    
+
     // Clear error for this field
     if (errors[name]) {
       setErrors((prev) => {
@@ -92,7 +101,8 @@ export default function CreateTournamentPage() {
     setTokenType(type);
     setFormData((prev) => ({
       ...prev,
-      tokenAddress: type === "eth" ? "0x0000000000000000000000000000000000000000" : "",
+      tokenAddress:
+        type === "eth" ? "0x0000000000000000000000000000000000000000" : "",
     }));
   };
 
@@ -100,30 +110,41 @@ export default function CreateTournamentPage() {
     const newErrors: Record<string, string> = {};
 
     if (!formData.name) newErrors.name = "Tournament name is required";
-    
+
     if (!formData.entryFee) {
       newErrors.entryFee = "Entry fee is required";
-    } else if (isNaN(Number(formData.entryFee)) || Number(formData.entryFee) < 0) {
+    } else if (
+      isNaN(Number(formData.entryFee)) ||
+      Number(formData.entryFee) < 0
+    ) {
       newErrors.entryFee = "Entry fee must be a valid number";
     }
-    
+
     if (!formData.maxPlayers) {
       newErrors.maxPlayers = "Maximum players is required";
-    } else if (isNaN(Number(formData.maxPlayers)) || Number(formData.maxPlayers) < 2 || !Number.isInteger(Number(formData.maxPlayers))) {
-      newErrors.maxPlayers = "Maximum players must be an integer greater than 1";
+    } else if (
+      isNaN(Number(formData.maxPlayers)) ||
+      Number(formData.maxPlayers) < 2 ||
+      !Number.isInteger(Number(formData.maxPlayers))
+    ) {
+      newErrors.maxPlayers =
+        "Maximum players must be an integer greater than 1";
     }
-    
+
     if (!formData.startDate) {
       newErrors.startDate = "Start date is required";
     }
-    
+
     if (!formData.startTime) {
       newErrors.startTime = "Start time is required";
     }
-    
+
     if (tokenType === "token" && !formData.tokenAddress) {
       newErrors.tokenAddress = "Token address is required for ERC20 tokens";
-    } else if (tokenType === "token" && !/^0x[a-fA-F0-9]{40}$/.test(formData.tokenAddress)) {
+    } else if (
+      tokenType === "token" &&
+      !/^0x[a-fA-F0-9]{40}$/.test(formData.tokenAddress)
+    ) {
       newErrors.tokenAddress = "Invalid ERC20 token address format";
     }
 
@@ -131,35 +152,46 @@ export default function CreateTournamentPage() {
     return Object.keys(newErrors).length === 0;
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    
+
     if (validateForm()) {
       setIsSubmitting(true);
-      
+
       // Prepare startTime as a Unix timestamp
       const dateObj = new Date(formData.startDate);
-      const [hours, minutes] = formData.startTime.split(':').map(Number);
+      const [hours, minutes] = formData.startTime.split(":").map(Number);
       dateObj.setHours(hours, minutes);
       const startTimestamp = Math.floor(dateObj.getTime() / 1000);
-      
+
       // Prepare data for blockchain
       const tournamentData = {
         name: formData.name,
-        entryFee: formData.entryFee,
-        tokenAddress: formData.tokenAddress,
-        maxPlayers: formData.maxPlayers,
-        startTime: startTimestamp,
-        duration: parseInt(formData.duration) * 3600, // Convert hours to seconds
+        entryFee: parseUnits(formData.entryFee, 18),
+        tokenAddress: formData.tokenAddress as `0x${string}`,
+        maxPlayers: BigInt(formData.maxPlayers),
+        startTime: BigInt(startTimestamp),
+        duration: BigInt(parseInt(formData.duration) * 3600), // Convert hours to seconds
       };
-      
+
       console.log("Creating tournament:", tournamentData);
-      
-      // Simulate API call to blockchain
-      setTimeout(() => {
-        setIsSubmitting(false);
-        setSubmitted(true);
-      }, 1500);
+      const hash = await writeContractAsync({
+        address: TOURNAMENT_MANAGER_ADDRESS,
+        abi: TournamentManagerABI,
+        functionName: "createTournament",
+        args: [
+          tournamentData.name,
+          tournamentData.entryFee,
+          tournamentData.tokenAddress,
+          tournamentData.maxPlayers,
+          tournamentData.startTime,
+          tournamentData.duration,
+        ],
+        chain: baseSepolia,
+        account: address,
+      });
+      console.log("hash", hash);
+      setSubmitted(true);
     } else {
       console.log("Validation failed", errors);
     }
@@ -201,7 +233,9 @@ export default function CreateTournamentPage() {
                     <CheckCircle className="h-6 w-6 text-green-600" />
                   </div>
                 </div>
-                <CardTitle className="text-center text-2xl">Tournament Created!</CardTitle>
+                <CardTitle className="text-center text-2xl">
+                  Tournament Created!
+                </CardTitle>
                 <CardDescription className="text-center pt-2">
                   Your tournament has been successfully created and is now live.
                 </CardDescription>
@@ -230,16 +264,15 @@ export default function CreateTournamentPage() {
                     </div>
                   </div>
                 </div>
-                
+
                 <p className="text-center text-muted-foreground">
-                  Share this tournament with your friends and start accepting registrations!
+                  Share this tournament with your friends and start accepting
+                  registrations!
                 </p>
               </CardContent>
               <CardFooter className="flex flex-col gap-4">
                 <Link href={`/tournament/1`} className="w-full">
-                  <Button className="w-full">
-                    View Tournament
-                  </Button>
+                  <Button className="w-full">View Tournament</Button>
                 </Link>
                 <Link href="/" className="w-full">
                   <Button variant="outline" className="w-full">
@@ -267,13 +300,16 @@ export default function CreateTournamentPage() {
       </header>
 
       <div className="container mx-auto px-4 sm:px-6 lg:px-8 py-10">
-        <Link href="/" className="inline-flex items-center text-sm text-muted-foreground hover:text-foreground mb-6">
+        <Link
+          href="/"
+          className="inline-flex items-center text-sm text-muted-foreground hover:text-foreground mb-6"
+        >
           <ChevronLeft className="mr-1 h-4 w-4" />
           Back to home
         </Link>
-        
+
         <div className="flex justify-between items-center mb-6">
-          <motion.h1 
+          <motion.h1
             initial={{ opacity: 0, y: -10 }}
             animate={{ opacity: 1, y: 0 }}
             className="text-3xl font-bold"
@@ -281,9 +317,9 @@ export default function CreateTournamentPage() {
             Create Tournament
           </motion.h1>
         </div>
-        
+
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-          <motion.div 
+          <motion.div
             variants={containerVariants}
             initial="hidden"
             animate="visible"
@@ -317,8 +353,11 @@ export default function CreateTournamentPage() {
                       </p>
                     )}
                   </motion.div>
-                  
-                  <motion.div variants={itemVariants} className="grid grid-cols-1 md:grid-cols-2 gap-4">
+
+                  <motion.div
+                    variants={itemVariants}
+                    className="grid grid-cols-1 md:grid-cols-2 gap-4"
+                  >
                     <div className="space-y-2">
                       <Label htmlFor="maxPlayers">
                         Maximum Players <span className="text-red-500">*</span>
@@ -333,7 +372,9 @@ export default function CreateTournamentPage() {
                           min="2"
                           value={formData.maxPlayers}
                           onChange={handleInputChange}
-                          className={`pl-10 ${errors.maxPlayers ? "border-red-500" : ""}`}
+                          className={`pl-10 ${
+                            errors.maxPlayers ? "border-red-500" : ""
+                          }`}
                         />
                       </div>
                       {errors.maxPlayers && (
@@ -343,7 +384,7 @@ export default function CreateTournamentPage() {
                         </p>
                       )}
                     </div>
-                    
+
                     <div className="space-y-2">
                       <Label>Payment Token</Label>
                       <Select
@@ -362,8 +403,11 @@ export default function CreateTournamentPage() {
                       </Select>
                     </div>
                   </motion.div>
-                  
-                  <motion.div variants={itemVariants} className="grid grid-cols-1 md:grid-cols-2 gap-4">
+
+                  <motion.div
+                    variants={itemVariants}
+                    className="grid grid-cols-1 md:grid-cols-2 gap-4"
+                  >
                     <div className="space-y-2">
                       <Label htmlFor="entryFee">
                         Entry Fee <span className="text-red-500">*</span>
@@ -379,7 +423,9 @@ export default function CreateTournamentPage() {
                           placeholder="25.00"
                           value={formData.entryFee}
                           onChange={handleInputChange}
-                          className={`pl-10 ${errors.entryFee ? "border-red-500" : ""}`}
+                          className={`pl-10 ${
+                            errors.entryFee ? "border-red-500" : ""
+                          }`}
                         />
                       </div>
                       {errors.entryFee && (
@@ -389,7 +435,7 @@ export default function CreateTournamentPage() {
                         </p>
                       )}
                     </div>
-                    
+
                     {tokenType === "token" && (
                       <div className="space-y-2">
                         <Label htmlFor="tokenAddress">
@@ -403,7 +449,9 @@ export default function CreateTournamentPage() {
                             placeholder="0x..."
                             value={formData.tokenAddress}
                             onChange={handleInputChange}
-                            className={`pl-10 ${errors.tokenAddress ? "border-red-500" : ""}`}
+                            className={`pl-10 ${
+                              errors.tokenAddress ? "border-red-500" : ""
+                            }`}
                           />
                         </div>
                         {errors.tokenAddress && (
@@ -417,7 +465,7 @@ export default function CreateTournamentPage() {
                   </motion.div>
                 </CardContent>
               </Card>
-              
+
               <Card>
                 <CardHeader>
                   <CardTitle>Schedule</CardTitle>
@@ -426,7 +474,10 @@ export default function CreateTournamentPage() {
                   </CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-4">
-                  <motion.div variants={itemVariants} className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <motion.div
+                    variants={itemVariants}
+                    className="grid grid-cols-1 md:grid-cols-2 gap-4"
+                  >
                     <div className="space-y-2">
                       <Label htmlFor="startDate">
                         Start Date <span className="text-red-500">*</span>
@@ -438,7 +489,7 @@ export default function CreateTournamentPage() {
                         value={formData.startDate}
                         onChange={handleInputChange}
                         className={errors.startDate ? "border-red-500" : ""}
-                        min={new Date().toISOString().split('T')[0]}
+                        min={new Date().toISOString().split("T")[0]}
                       />
                       {errors.startDate && (
                         <p className="text-red-500 text-xs flex items-center mt-1">
@@ -447,7 +498,7 @@ export default function CreateTournamentPage() {
                         </p>
                       )}
                     </div>
-                    
+
                     <div className="space-y-2">
                       <Label htmlFor="startTime">
                         Start Time <span className="text-red-500">*</span>
@@ -460,7 +511,9 @@ export default function CreateTournamentPage() {
                           type="time"
                           value={formData.startTime}
                           onChange={handleInputChange}
-                          className={`pl-10 ${errors.startTime ? "border-red-500" : ""}`}
+                          className={`pl-10 ${
+                            errors.startTime ? "border-red-500" : ""
+                          }`}
                         />
                       </div>
                       {errors.startTime && (
@@ -471,13 +524,16 @@ export default function CreateTournamentPage() {
                       )}
                     </div>
                   </motion.div>
-                  
+
                   <motion.div variants={itemVariants} className="space-y-2">
                     <Label htmlFor="duration">
-                      Tournament Duration <span className="text-red-500">*</span>
+                      Tournament Duration{" "}
+                      <span className="text-red-500">*</span>
                     </Label>
                     <Select
-                      onValueChange={(value) => handleSelectChange("duration", value)}
+                      onValueChange={(value) =>
+                        handleSelectChange("duration", value)
+                      }
                       defaultValue={formData.duration}
                     >
                       <SelectTrigger id="duration">
@@ -494,7 +550,7 @@ export default function CreateTournamentPage() {
                   </motion.div>
                 </CardContent>
               </Card>
-              
+
               <motion.div
                 variants={itemVariants}
                 className="flex items-center justify-end gap-4"
@@ -507,9 +563,13 @@ export default function CreateTournamentPage() {
                 <Button type="submit" disabled={isSubmitting}>
                   {isSubmitting ? (
                     <>
-                      <motion.div 
-                        animate={{ rotate: 360 }} 
-                        transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
+                      <motion.div
+                        animate={{ rotate: 360 }}
+                        transition={{
+                          duration: 1,
+                          repeat: Infinity,
+                          ease: "linear",
+                        }}
                         className="mr-2 h-4 w-4 border-2 border-current border-t-transparent rounded-full"
                       />
                       Creating...
@@ -524,8 +584,8 @@ export default function CreateTournamentPage() {
               </motion.div>
             </form>
           </motion.div>
-          
-          <motion.div 
+
+          <motion.div
             variants={containerVariants}
             initial="hidden"
             animate="visible"
@@ -542,22 +602,26 @@ export default function CreateTournamentPage() {
                 {[
                   {
                     title: "Choose the right player cap",
-                    description: "Consider your game and tournament format. 8, 16, 32, or 64 are common sizes for brackets.",
+                    description:
+                      "Consider your game and tournament format. 8, 16, 32, or 64 are common sizes for brackets.",
                     icon: <Users className="h-5 w-5 text-blue-500" />,
                   },
                   {
                     title: "Set an appropriate entry fee",
-                    description: "Balance accessibility with prize pool. Lower fees attract more participants.",
+                    description:
+                      "Balance accessibility with prize pool. Lower fees attract more participants.",
                     icon: <DollarSign className="h-5 w-5 text-green-500" />,
                   },
                   {
                     title: "Schedule strategically",
-                    description: "Choose dates/times when your target players are likely to be available.",
+                    description:
+                      "Choose dates/times when your target players are likely to be available.",
                     icon: <Clock className="h-5 w-5 text-purple-500" />,
                   },
                   {
                     title: "Provide clear information",
-                    description: "Players need to know what to expect regarding format, rules, and prize distribution.",
+                    description:
+                      "Players need to know what to expect regarding format, rules, and prize distribution.",
                     icon: <Info className="h-5 w-5 text-orange-500" />,
                   },
                 ].map((tip, index) => (
@@ -579,9 +643,9 @@ export default function CreateTournamentPage() {
                 ))}
               </CardContent>
             </Card>
-            
+
             <div className="mt-6">
-              <motion.div 
+              <motion.div
                 variants={itemVariants}
                 className="bg-gradient-to-br from-primary/10 to-primary/5 border border-primary/20 rounded-lg p-6"
               >
@@ -592,7 +656,7 @@ export default function CreateTournamentPage() {
                 <p className="text-sm text-muted-foreground mb-4">
                   Default prize distribution for your tournament:
                 </p>
-                
+
                 <div className="space-y-3">
                   <div className="flex justify-between items-center">
                     <div className="flex items-center">
@@ -603,7 +667,7 @@ export default function CreateTournamentPage() {
                     </div>
                     <span className="font-semibold">50%</span>
                   </div>
-                  
+
                   <div className="flex justify-between items-center">
                     <div className="flex items-center">
                       <div className="bg-gray-100 p-1 rounded-full mr-2">
@@ -613,7 +677,7 @@ export default function CreateTournamentPage() {
                     </div>
                     <span className="font-semibold">30%</span>
                   </div>
-                  
+
                   <div className="flex justify-between items-center">
                     <div className="flex items-center">
                       <div className="bg-amber-100 p-1 rounded-full mr-2">
@@ -624,9 +688,10 @@ export default function CreateTournamentPage() {
                     <span className="font-semibold">20%</span>
                   </div>
                 </div>
-                
+
                 <div className="text-xs text-muted-foreground mt-4">
-                  Prize distribution is based on the smart contract default settings.
+                  Prize distribution is based on the smart contract default
+                  settings.
                 </div>
               </motion.div>
             </div>

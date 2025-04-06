@@ -6,6 +6,7 @@ import { QueryClientProvider } from "@tanstack/react-query";
 import { sepolia } from "viem/chains";
 import { WagmiProvider } from "wagmi";
 import { config, queryClient } from "./helpers/Client";
+import Web3Connect from "./helpers/Web3Connect";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -32,11 +33,11 @@ export default function RootLayout({
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >
-
         <WagmiProvider config={config}>
           <QueryClientProvider client={queryClient}>
             <RainbowKitProvider initialChain={sepolia}>
-                {children}
+              <Web3Connect />
+              {children}
             </RainbowKitProvider>
           </QueryClientProvider>
         </WagmiProvider>

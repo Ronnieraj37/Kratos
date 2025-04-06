@@ -1,4 +1,4 @@
-'use client';
+"use client";
 
 import React, { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
@@ -14,6 +14,7 @@ import {
   RotateCcw,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useAccount } from "wagmi";
 
 interface SpinGameProps {
   onComplete?: (score: number) => void;
@@ -22,6 +23,9 @@ interface SpinGameProps {
   tournamentName?: string;
   tournamentEndTime?: string;
   canSpin?: boolean;
+  tournamentId: string;
+  playerCount?: number;
+  maxPlayers?: number;
 }
 
 type Symbol = {
@@ -32,65 +36,65 @@ type Symbol = {
 };
 
 const symbols: Symbol[] = [
-  { 
-    value: 0, 
-    name: "0", 
+  {
+    value: 0,
+    name: "0",
     color: "text-gray-500 bg-gray-200",
-    icon: <Star className="h-6 w-6 text-gray-500" />
+    icon: <Star className="h-6 w-6 text-gray-500" />,
   },
-  { 
-    value: 1, 
-    name: "1", 
+  {
+    value: 1,
+    name: "1",
     color: "text-blue-500 bg-blue-100",
-    icon: <Star className="h-6 w-6 text-blue-500" />
+    icon: <Star className="h-6 w-6 text-blue-500" />,
   },
-  { 
-    value: 2, 
-    name: "2", 
+  {
+    value: 2,
+    name: "2",
     color: "text-green-500 bg-green-100",
-    icon: <Star className="h-6 w-6 text-green-500" />
+    icon: <Star className="h-6 w-6 text-green-500" />,
   },
-  { 
-    value: 3, 
-    name: "3", 
+  {
+    value: 3,
+    name: "3",
     color: "text-yellow-500 bg-yellow-100",
-    icon: <Star className="h-6 w-6 text-yellow-500" />
+    icon: <Star className="h-6 w-6 text-yellow-500" />,
   },
-  { 
-    value: 4, 
-    name: "4", 
+  {
+    value: 4,
+    name: "4",
     color: "text-orange-500 bg-orange-100",
-    icon: <Star className="h-6 w-6 text-orange-500" />
+    icon: <Star className="h-6 w-6 text-orange-500" />,
   },
-  { 
-    value: 5, 
-    name: "5", 
+  {
+    value: 5,
+    name: "5",
     color: "text-red-500 bg-red-100",
-    icon: <Star className="h-6 w-6 text-red-500" />
+    icon: <Star className="h-6 w-6 text-red-500" />,
   },
-  { 
-    value: 6, 
-    name: "6", 
+  {
+    value: 6,
+    name: "6",
     color: "text-purple-500 bg-purple-100",
-    icon: <Star className="h-6 w-6 text-purple-500" />
+    icon: <Star className="h-6 w-6 text-purple-500" />,
   },
-  { 
-    value: 7, 
-    name: "7", 
+  {
+    value: 7,
+    name: "7",
     color: "text-pink-500 bg-pink-100",
-    icon: <Star className="h-6 w-6 text-pink-500" />
+    icon: <Star className="h-6 w-6 text-pink-500" />,
   },
-  { 
-    value: 8, 
-    name: "8", 
+  {
+    value: 8,
+    name: "8",
     color: "text-indigo-500 bg-indigo-100",
-    icon: <Star className="h-6 w-6 text-indigo-500" />
+    icon: <Star className="h-6 w-6 text-indigo-500" />,
   },
-  { 
-    value: 9, 
-    name: "9", 
+  {
+    value: 9,
+    name: "9",
     color: "text-teal-500 bg-teal-100",
-    icon: <Star className="h-6 w-6 text-teal-500" />
+    icon: <Star className="h-6 w-6 text-teal-500" />,
   },
 ];
 
@@ -98,7 +102,7 @@ const jackpotSymbol: Symbol = {
   value: 7,
   name: "7",
   color: "text-yellow-600 bg-yellow-100",
-  icon: <Trophy className="h-6 w-6 text-yellow-600" />
+  icon: <Trophy className="h-6 w-6 text-yellow-600" />,
 };
 
 const SpinGame = ({
@@ -108,6 +112,9 @@ const SpinGame = ({
   tournamentName = "Tournament",
   tournamentEndTime = "2023-12-17T18:00:00",
   canSpin = true,
+  tournamentId,
+  playerCount,
+  maxPlayers,
 }: SpinGameProps) => {
   const [spinning, setSpinning] = useState(false);
   const [results, setResults] = useState<Symbol[]>([]);
@@ -118,6 +125,9 @@ const SpinGame = ({
   const [showHelp, setShowHelp] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isSubmitted, setIsSubmitted] = useState(false);
+  const { address } = useAccount();
+
+  const isFullyBooked = playerCount === maxPlayers;
 
   // Calculate remaining time until tournament ends
   useEffect(() => {
@@ -132,7 +142,9 @@ const SpinGame = ({
       }
 
       const days = Math.floor(diff / (1000 * 60 * 60 * 24));
-      const hours = Math.floor((diff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+      const hours = Math.floor(
+        (diff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60)
+      );
       const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
 
       if (days > 0) {
@@ -150,22 +162,42 @@ const SpinGame = ({
     return () => clearInterval(interval);
   }, [tournamentEndTime]);
 
-  // Function to submit score to blockchain (empty for now)
+  // Function to submit score to blockchain via API
   const submitScoreToBlockchain = async (scoreValue: number) => {
-    // This would be where you make the API call to submit to the blockchain
     console.log("Submitting score to blockchain:", scoreValue);
-    
-    // Simulate API call
     setIsSubmitting(true);
-    
-    // Simulate blockchain transaction time
-    await new Promise(resolve => setTimeout(resolve, 2000));
-    
-    setIsSubmitting(false);
-    setIsSubmitted(true);
-    
-    // Call onComplete callback
-    onComplete(scoreValue);
+
+    try {
+      // Call the API endpoint
+      console.log("Started here?");
+      const response = await fetch("/api/submit", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          tournamentId,
+          playerAddress: address,
+          score: scoreValue,
+        }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.message || "Failed to submit score");
+      }
+
+      console.log("Score submitted successfully:", data);
+      setIsSubmitted(true);
+
+      // Call onComplete callback with the score
+      onComplete(scoreValue);
+    } catch (error) {
+      console.error("Error submitting score:", error);
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   const spinReels = () => {
@@ -185,25 +217,36 @@ const SpinGame = ({
     setTimeout(() => {
       // First reel stops
       const jackpotChance1 = Math.random() < 0.1; // 10% chance for jackpot symbol
-      newResults[0] = jackpotChance1 ? jackpotSymbol : symbols[Math.floor(Math.random() * symbols.length)];
+      newResults[0] = jackpotChance1
+        ? jackpotSymbol
+        : symbols[Math.floor(Math.random() * symbols.length)];
       setResults([newResults[0]]);
 
       setTimeout(() => {
         // Second reel stops
         const jackpotChance2 = Math.random() < 0.1;
-        newResults[1] = jackpotChance2 ? jackpotSymbol : symbols[Math.floor(Math.random() * symbols.length)];
+        newResults[1] = jackpotChance2
+          ? jackpotSymbol
+          : symbols[Math.floor(Math.random() * symbols.length)];
         setResults([newResults[0], newResults[1]]);
 
         setTimeout(() => {
           // Third reel stops
           // If the first two are jackpot, increase chance of third jackpot (but not guaranteed)
-          const isFirstTwoJackpot = newResults[0].value === 7 && newResults[1].value === 7;
+          const isFirstTwoJackpot =
+            newResults[0].value === 7 && newResults[1].value === 7;
           const jackpotChance3 = isFirstTwoJackpot ? 0.4 : 0.1;
-          newResults[2] = Math.random() < jackpotChance3 ? jackpotSymbol : symbols[Math.floor(Math.random() * symbols.length)];
+          newResults[2] =
+            Math.random() < jackpotChance3
+              ? jackpotSymbol
+              : symbols[Math.floor(Math.random() * symbols.length)];
           setResults([newResults[0], newResults[1], newResults[2]]);
 
           // Calculate score as the concatenated digits (e.g., 7,8,4 becomes 784)
-          const calculatedScore = parseInt(`${newResults[0].value}${newResults[1].value}${newResults[2].value}`);
+          const calculatedScore = parseInt(
+            `${newResults[0].value}${newResults[1].value}${newResults[2].value}`
+          );
+          submitScoreToBlockchain(calculatedScore);
           setScore(calculatedScore);
           setSpinning(false);
 
@@ -216,12 +259,6 @@ const SpinGame = ({
           ) {
             setShowCelebration(true);
           }
-
-          // Auto-submit the score after a short delay
-          setTimeout(() => {
-            submitScoreToBlockchain(calculatedScore);
-          }, 1500);
-
         }, 1000);
       }, 800);
     }, 600);
@@ -230,7 +267,7 @@ const SpinGame = ({
   // Calculate score color based on value
   const getScoreColor = () => {
     if (!score) return "text-white";
-    
+
     if (score >= 900) return "text-yellow-500";
     if (score >= 700) return "text-green-500";
     if (score >= 500) return "text-blue-500";
@@ -256,25 +293,37 @@ const SpinGame = ({
             <div className="absolute inset-0 z-0 opacity-20">
               <svg width="100%" height="100%" className="absolute">
                 <defs>
-                  <pattern id="dice-pattern" x="0" y="0" width="40" height="40" patternUnits="userSpaceOnUse">
-                    <path d="M0 0h10v10H0zm20 0h10v10H20zM10 10h10v10H10zm20 10h10v10H20zM0 20h10v10H0zm10 20h10v10H10zm20 0h10v10H20z" fill="currentColor" />
+                  <pattern
+                    id="dice-pattern"
+                    x="0"
+                    y="0"
+                    width="40"
+                    height="40"
+                    patternUnits="userSpaceOnUse"
+                  >
+                    <path
+                      d="M0 0h10v10H0zm20 0h10v10H20zM10 10h10v10H10zm20 10h10v10H20zM0 20h10v10H0zm10 20h10v10H10zm20 0h10v10H20z"
+                      fill="currentColor"
+                    />
                   </pattern>
                 </defs>
                 <rect width="100%" height="100%" fill="url(#dice-pattern)" />
               </svg>
             </div>
-            
+
             {/* Header */}
             <div className="relative p-6 z-10">
               <div className="flex justify-between items-start mb-2">
                 <div>
-                  <h2 className="text-2xl font-bold text-white">{tournamentName}</h2>
+                  <h2 className="text-2xl font-bold text-white">
+                    {tournamentName}
+                  </h2>
                   <div className="flex items-center text-yellow-300 mt-1">
                     <Clock className="h-4 w-4 mr-1" />
                     <span className="text-sm">{remainingTime}</span>
                   </div>
                 </div>
-                
+
                 <div className="flex items-center gap-2">
                   <motion.button
                     whileHover={{ scale: 1.1 }}
@@ -282,13 +331,23 @@ const SpinGame = ({
                     onClick={() => setShowHelp(!showHelp)}
                     className="bg-gray-700 hover:bg-gray-600 text-gray-300 rounded-full p-1"
                   >
-                    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <svg
+                      xmlns="http://www.w3.org/2000/svg"
+                      width="20"
+                      height="20"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    >
                       <circle cx="12" cy="12" r="10"></circle>
                       <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"></path>
                       <line x1="12" y1="17" x2="12.01" y2="17"></line>
                     </svg>
                   </motion.button>
-                  
+
                   <motion.button
                     whileHover={{ scale: 1.1 }}
                     whileTap={{ scale: 0.95 }}
@@ -299,11 +358,11 @@ const SpinGame = ({
                   </motion.button>
                 </div>
               </div>
-              
+
               <div className="text-gray-300 text-sm mb-4">
                 Spin to determine your tournament score
               </div>
-              
+
               {/* Help tooltip */}
               <AnimatePresence>
                 {showHelp && (
@@ -313,25 +372,33 @@ const SpinGame = ({
                     exit={{ opacity: 0, y: -20 }}
                     className="absolute right-6 top-16 bg-gray-800 border border-gray-700 rounded-lg p-4 shadow-lg z-30 text-sm text-gray-300 w-64"
                   >
-                    <h3 className="font-semibold text-white mb-2">How It Works</h3>
+                    <h3 className="font-semibold text-white mb-2">
+                      How It Works
+                    </h3>
                     <ul className="space-y-2">
                       <li className="flex items-start gap-2">
                         <div className="bg-yellow-100 rounded-full p-1 mt-0.5">
                           <Trophy className="h-3 w-3 text-yellow-600" />
                         </div>
-                        <span>Your score is determined by the three digits!</span>
+                        <span>
+                          Your score is determined by the three digits!
+                        </span>
                       </li>
                       <li className="flex items-start gap-2">
                         <div className="bg-pink-100 rounded-full p-1 mt-0.5">
                           <Star className="h-3 w-3 text-pink-500" />
                         </div>
-                        <span>Triple 7s give you the highest score of 777!</span>
+                        <span>
+                          Triple 7s give you the highest score of 777!
+                        </span>
                       </li>
                       <li className="flex items-start gap-2">
                         <div className="bg-blue-100 rounded-full p-1 mt-0.5">
                           <Award className="h-3 w-3 text-blue-500" />
                         </div>
-                        <span>Your score is automatically recorded on the blockchain</span>
+                        <span>
+                          Your score is automatically recorded on the blockchain
+                        </span>
                       </li>
                     </ul>
                     <ChevronDown className="absolute -top-4 right-4 h-4 w-4 text-gray-800" />
@@ -339,10 +406,10 @@ const SpinGame = ({
                 )}
               </AnimatePresence>
             </div>
-            
+
             <CardContent className="p-6 pt-0 relative z-10">
               {/* Reels container */}
-              <motion.div 
+              <motion.div
                 initial={{ y: 20, opacity: 0 }}
                 animate={{ y: 0, opacity: 1 }}
                 transition={{ delay: 0.2 }}
@@ -353,17 +420,17 @@ const SpinGame = ({
                     key={index}
                     initial={{ scale: 0.9 }}
                     animate={{ scale: 1 }}
-                    transition={{ 
-                      delay: index * 0.1, 
-                      type: "spring", 
-                      stiffness: 400, 
-                      damping: 20 
+                    transition={{
+                      delay: index * 0.1,
+                      type: "spring",
+                      stiffness: 400,
+                      damping: 20,
                     }}
                     className="relative w-24 h-32 bg-gradient-to-b from-gray-700 to-gray-800 rounded-lg border-2 border-yellow-400 overflow-hidden shadow-inner"
                   >
                     {/* Shiny effect */}
                     <div className="absolute inset-0 overflow-hidden pointer-events-none">
-                      <motion.div 
+                      <motion.div
                         className="absolute inset-0 bg-gradient-to-br from-white/40 via-transparent to-transparent"
                         animate={{
                           left: ["100%", "-100%"],
@@ -377,7 +444,7 @@ const SpinGame = ({
                         }}
                       />
                     </div>
-                    
+
                     <div className="absolute inset-0 bg-gradient-to-b from-transparent via-transparent to-black/30 pointer-events-none z-10"></div>
 
                     <AnimatePresence>
@@ -398,16 +465,29 @@ const SpinGame = ({
                           {Array(20)
                             .fill(0)
                             .map((_, i) => {
-                              const symbol = i % 10 === 7 ? jackpotSymbol : symbols[i % symbols.length];
+                              const symbol =
+                                i % 10 === 7
+                                  ? jackpotSymbol
+                                  : symbols[i % symbols.length];
                               return (
                                 <div
                                   key={i}
-                                  className={`flex flex-col items-center justify-center h-32 w-full ${i % 2 === 0 ? 'bg-gray-800/50' : 'bg-gray-700/50'}`}
+                                  className={`flex flex-col items-center justify-center h-32 w-full ${
+                                    i % 2 === 0
+                                      ? "bg-gray-800/50"
+                                      : "bg-gray-700/50"
+                                  }`}
                                 >
-                                  <div className={`flex flex-col items-center justify-center rounded-full w-12 h-12 ${symbol.color} mb-1`}>
+                                  <div
+                                    className={`flex flex-col items-center justify-center rounded-full w-12 h-12 ${symbol.color} mb-1`}
+                                  >
                                     {symbol.icon}
                                   </div>
-                                  <span className={`text-lg font-bold ${symbol.color.split(' ')[0]}`}>
+                                  <span
+                                    className={`text-lg font-bold ${
+                                      symbol.color.split(" ")[0]
+                                    }`}
+                                  >
                                     {symbol.name}
                                   </span>
                                 </div>
@@ -422,25 +502,29 @@ const SpinGame = ({
                             transition={{
                               type: "spring",
                               stiffness: 300,
-                              damping: 15
+                              damping: 15,
                             }}
                             className="flex flex-col items-center justify-center h-full"
                           >
                             {/* Apply a separate pop animation after the symbol appears */}
-                            <motion.div 
+                            <motion.div
                               initial={{ scale: 1 }}
                               animate={{ scale: [1, 1.2, 1] }}
                               transition={{
                                 duration: 0.3,
                                 times: [0, 0.5, 1],
                                 ease: "easeInOut",
-                                delay: 0.1
+                                delay: 0.1,
                               }}
                               className={`flex items-center justify-center rounded-full w-14 h-14 ${results[index].color} mb-1`}
                             >
                               {results[index].icon}
                             </motion.div>
-                            <span className={`text-xl font-bold ${results[index].color.split(' ')[0]}`}>
+                            <span
+                              className={`text-xl font-bold ${
+                                results[index].color.split(" ")[0]
+                              }`}
+                            >
                               {results[index].name}
                             </span>
                           </motion.div>
@@ -462,26 +546,46 @@ const SpinGame = ({
                     className="text-center mb-8"
                   >
                     <div className="bg-gray-800/80 rounded-lg p-6 border border-gray-700">
-                      <h3 className="text-lg text-gray-300 mb-2">Your Tournament Score</h3>
-                      <div className={`text-6xl font-bold ${getScoreColor()} mb-2`}>
+                      <h3 className="text-lg text-gray-300 mb-2">
+                        Your Tournament Score
+                      </h3>
+                      <div
+                        className={`text-6xl font-bold ${getScoreColor()} mb-2`}
+                      >
                         {score}
                       </div>
-                      
+
                       {isSubmitting && (
                         <div className="flex items-center justify-center mt-4">
-                          <motion.div 
+                          <motion.div
                             className="h-5 w-5 border-2 border-blue-500 border-t-transparent rounded-full mr-2"
                             animate={{ rotate: 360 }}
-                            transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
+                            transition={{
+                              duration: 1,
+                              repeat: Infinity,
+                              ease: "linear",
+                            }}
                           />
-                          <span className="text-blue-400">Recording score on blockchain...</span>
+                          <span className="text-blue-400">
+                            Recording score on blockchain...
+                          </span>
                         </div>
                       )}
-                      
+
                       {isSubmitted && (
                         <div className="text-green-400 flex items-center justify-center mt-4">
-                          <svg className="h-5 w-5 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                          <svg
+                            className="h-5 w-5 mr-2"
+                            fill="none"
+                            viewBox="0 0 24 24"
+                            stroke="currentColor"
+                          >
+                            <path
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                              strokeWidth={2}
+                              d="M5 13l4 4L19 7"
+                            />
                           </svg>
                           Score successfully recorded!
                         </div>
@@ -499,19 +603,30 @@ const SpinGame = ({
                 >
                   <Button
                     onClick={spinReels}
-                    disabled={spinning || !canSpin || isSubmitting || isSubmitted}
+                    disabled={
+                      spinning ||
+                      !canSpin ||
+                      isSubmitting ||
+                      isSubmitted ||
+                      !isFullyBooked
+                    }
                     size="lg"
                     className={cn(
                       "bg-gradient-to-r from-yellow-500 to-yellow-600 hover:from-yellow-600 hover:to-yellow-700 text-white font-bold py-3 px-8 rounded-full shadow-lg transform transition-all duration-200 min-w-[180px]",
-                      spinning && "animate-pulse"
+                      spinning && "animate-pulse",
+                      !isFullyBooked && "opacity-50 cursor-not-allowed"
                     )}
                   >
                     {spinning ? (
                       <div className="flex items-center justify-center">
-                        <motion.div 
+                        <motion.div
                           className="h-4 w-4 border-2 border-white border-t-transparent rounded-full mr-2"
                           animate={{ rotate: 360 }}
-                          transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
+                          transition={{
+                            duration: 1,
+                            repeat: Infinity,
+                            ease: "linear",
+                          }}
                         />
                         Spinning...
                       </div>
@@ -528,7 +643,7 @@ const SpinGame = ({
                   </Button>
                 </motion.div>
               </div>
-              
+
               {/* Hint text */}
               {canSpin && !spinning && !isSubmitted && !isSubmitting && (
                 <div className="text-center text-gray-400 text-xs animate-pulse">
@@ -582,25 +697,29 @@ const SpinGame = ({
                   }}
                 >
                   <span className="text-4xl">
-                    {["🎉", "🎊", "✨", "💰", "🏆"][Math.floor(Math.random() * 5)]}
+                    {
+                      ["🎉", "🎊", "✨", "💰", "🏆"][
+                        Math.floor(Math.random() * 5)
+                      ]
+                    }
                   </span>
                 </motion.div>
               ))}
-            
+
             {/* Glowing halo around the card */}
             <motion.div
               className="absolute inset-0 bg-gradient-to-r from-yellow-500/20 via-pink-500/20 to-purple-500/20 blur-2xl"
-              animate={{ 
+              animate={{
                 opacity: [0.5, 0.8, 0.5],
-                rotate: [0, 360]
+                rotate: [0, 360],
               }}
-              transition={{ 
+              transition={{
                 duration: 8,
                 repeat: Infinity,
-                repeatType: "reverse"
+                repeatType: "reverse",
               }}
             />
-            
+
             {/* Confetti */}
             {Array(30)
               .fill(0)
@@ -610,7 +729,12 @@ const SpinGame = ({
                   className="absolute top-0 left-0 w-3 h-3"
                   style={{
                     backgroundColor: [
-                      "#ff0", "#f0f", "#0ff", "#f00", "#0f0", "#00f"
+                      "#ff0",
+                      "#f0f",
+                      "#0ff",
+                      "#f00",
+                      "#0f0",
+                      "#00f",
                     ][Math.floor(Math.random() * 6)],
                   }}
                   initial={{
@@ -618,7 +742,10 @@ const SpinGame = ({
                     y: -20,
                   }}
                   animate={{
-                    x: [window.innerWidth / 2, window.innerWidth / 2 + (Math.random() * 200 - 100)],
+                    x: [
+                      window.innerWidth / 2,
+                      window.innerWidth / 2 + (Math.random() * 200 - 100),
+                    ],
                     y: [0, window.innerHeight + 20],
                     rotate: [0, Math.random() * 360],
                   }}

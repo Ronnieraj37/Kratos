@@ -1,42 +1,41 @@
-'use client';
+"use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo, useRef } from "react";
 import Link from "next/link";
+import { useParams } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   ChevronLeft,
   Trophy,
   Users,
   Calendar,
-  Clock,
   DollarSign,
   Info,
-  Share2,
   Award,
   CheckCircle,
   Lock,
-  ArrowRight,
   Heart,
   RotateCcw,
+  Clock,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
-import {
-  Tabs,
-  TabsContent,
-  TabsList,
-  TabsTrigger,
-} from "@/components/ui/tabs";
-import {
-  Avatar,
-  AvatarFallback,
-  AvatarImage,
-} from "@/components/ui/avatar";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Progress } from "@/components/ui/progress";
-import PaymentPopup from "@/components/PaymentPopup";
 import SpinGame from "@/components/SpinGame";
-
+import {
+  useTournamentDetails,
+  usePlayerJoinedTournament,
+  useTournamentWinners,
+  usePlayerScore,
+  useTournamentParticipants,
+} from "../../contract/getters/Getter";
+import { useAccount, useToken, useWriteContract } from "wagmi";
+import { TOURNAMENT_MANAGER_ADDRESS } from "@/app/constants";
+import { TournamentManagerABI } from "@/app/contract/abi/TournamentManager";
+import { baseSepolia } from "viem/chains";
 // Define player type
 interface Player {
   id: string;
@@ -64,155 +63,218 @@ interface TournamentDetails {
     name: string;
     avatar: string;
   };
+  tokenAddress: `0x${string}`;
   rules: string[];
   players: Player[];
   winners?: Player[];
 }
 
-// Mock data for tournament details
-const mockTournamentDetails: TournamentDetails = {
-  id: "1",
-  name: "Summer Championship",
-  game: "Fortnite",
-  description:
-    "Compete in our Summer Championship for a chance to win big prizes! This tournament follows a battle royale format where the last player standing wins. Prove your skills and climb to the top of the leaderboard!",
-  prizePool: 10000,
-  entryFee: 25,
-  playerCount: 42,
-  maxPlayers: 64,
-  startDate: new Date("2023-07-15T18:00:00"),
-  endDate: new Date("2023-07-15T23:00:00"),
-  status: "upcoming",
-  image: "https://images.unsplash.com/photo-1560253023-3ec5d502959f?w=800&q=80",
-  organizer: {
-    name: "GameMasters Inc.",
-    avatar: "https://api.dicebear.com/6.x/initials/svg?seed=GM",
-  },
-  rules: [
-    "Players must be at least 16 years old",
-    "Must own a copy of the game",
-    "All participants must join the Discord server",
-    "No cheating or exploitation of game bugs",
-    "Players must be available for the entire duration of the tournament",
-  ],
-  players: Array(42)
-    .fill(0)
-    .map((_, i) => ({
-      id: `player-${i + 1}`,
-      name: `Player ${i + 1}`,
-      avatar: `https://api.dicebear.com/6.x/avataaars/svg?seed=${i}`,
-      position: i + 1,
-      score: Math.floor(Math.random() * 800 + 200),
-    })),
-};
+export default function TournamentDetailsPage() {
+  const params = useParams();
 
-export default function TournamentDetailsPage({ params }: { params: { id: string } }) {
-  const [tournament, setTournament] = useState<TournamentDetails>(mockTournamentDetails);
-  const [isPaymentOpen, setIsPaymentOpen] = useState(false);
+  const tournamentId = params.id as string;
+  const { address } = useAccount();
+  const {
+    tournamentDetails,
+    isLoading: isTournamentLoading,
+    error: tournamentError,
+  } = useTournamentDetails(tournamentId);
+  const { writeContractAsync } = useWriteContract();
+
+  // Fetch tournament participants
+  const { participants } = useTournamentParticipants(tournamentId);
+  // Check if player has joined
+  const { hasJoined } = usePlayerJoinedTournament(tournamentId, address!);
+  const { winners } = useTournamentWinners(tournamentId);
+  const { score: playerScore } = usePlayerScore(tournamentId, address!);
+  // State management
+  const [tournament, setTournament] = useState<TournamentDetails | null>(null);
   const [isSpinGameOpen, setIsSpinGameOpen] = useState(false);
-  // Start with hasJoined as true so we can play directly
-  const [hasJoined, setHasJoined] = useState(true);
-  const [hasSpun, setHasSpun] = useState(false);
   const [userScore, setUserScore] = useState<number | null>(null);
-  const [userPosition, setUserPosition] = useState<number | null>(null);
+
   const [activeTab, setActiveTab] = useState("overview");
-  const [timeRemaining, setTimeRemaining] = useState("");
   const [isFavorite, setIsFavorite] = useState(false);
+  const tournamentDataLoaded = useRef(false);
 
-  // Calculate time remaining
-  useEffect(() => {
-    const calculateTimeRemaining = () => {
-      const now = new Date();
-      const diff = tournament.startDate.getTime() - now.getTime();
-
-      if (diff <= 0 && tournament.status === "upcoming") {
-        // If start time has passed but status is still upcoming, update it
-        setTournament((prev) => ({
-          ...prev,
-          status: "ongoing",
-        }));
-        setTimeRemaining("Tournament has started");
-        return;
-      }
-
-      if (diff <= 0) {
-        setTimeRemaining("Tournament has started");
-        return;
-      }
-
-      const days = Math.floor(diff / (1000 * 60 * 60 * 24));
-      const hours = Math.floor((diff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
-      const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
-
-      if (days > 0) {
-        setTimeRemaining(`${days}d ${hours}h ${minutes}m`);
-      } else if (hours > 0) {
-        setTimeRemaining(`${hours}h ${minutes}m`);
-      } else {
-        setTimeRemaining(`${minutes}m`);
-      }
-    };
-
-    calculateTimeRemaining();
-    const interval = setInterval(calculateTimeRemaining, 60000);
-
-    return () => clearInterval(interval);
-  }, [tournament.startDate, tournament.status]);
-
-  // Handle payment successful
-  const handlePaymentSuccess = () => {
-    setIsPaymentOpen(false);
-    setHasJoined(true);
-    // Update player count in tournament
-    setTournament((prev) => ({
-      ...prev,
-      playerCount: prev.playerCount + 1,
-      players: [
-        {
-          id: "current-user",
-          name: "You",
-          avatar: "https://api.dicebear.com/6.x/avataaars/svg?seed=you",
-        },
-        ...prev.players,
-      ],
+  // Create participants list with basic information
+  const participantsList = useMemo(() => {
+    return (participants || []).map((address, index) => ({
+      id: address,
+      name: `Player ${index + 1}`,
+      avatar: `https://api.dicebear.com/6.x/avataaars/svg?seed=${address}`,
+      // Add more details if available from contract
     }));
+  }, [participants]);
 
-    // Open spin game after a short delay
-    setTimeout(() => {
-      setIsSpinGameOpen(true);
-    }, 1000);
+  // Fetch user score from contract
+  const userScoreFromContract = useMemo(() => {
+    return playerScore ? Number(playerScore) : null;
+  }, [playerScore]);
+
+  // Determine if the player has already played (has a score)
+  const hasPlayed = useMemo(() => {
+    return userScoreFromContract !== null && userScoreFromContract > 0;
+  }, [userScoreFromContract]);
+
+  // Sort participants (currently just a placeholder sorting)
+  const sortedPlayers = useMemo(() => {
+    return [...participantsList];
+  }, [participantsList]);
+
+  const formatRelativeTime = (date: Date) => {
+    const now = new Date();
+    const diff = date.getTime() - now.getTime();
+
+    if (diff <= 0) {
+      return "now";
+    }
+
+    const days = Math.floor(diff / (1000 * 60 * 60 * 24));
+    const hours = Math.floor((diff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+    const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
+
+    if (days > 0) {
+      return `in ${days}d ${hours}h`;
+    } else if (hours > 0) {
+      return `in ${hours}h ${minutes}m`;
+    } else {
+      return `in ${minutes}m`;
+    }
   };
+
+  const isRegistrationOpen = () => {
+    // Get current time
+    const now = new Date();
+
+    // Check if tournament is full
+    const isTournamentFull = tournament.playerCount >= tournament.maxPlayers;
+
+    // Registration is open if:
+    // 1. Current time is before tournament start time AND
+    // 2. Tournament is not full
+    return now < tournament.startDate && !isTournamentFull;
+  };
+
+  const joinTournament = async () => {
+    try {
+      const hash = await writeContractAsync({
+        address: TOURNAMENT_MANAGER_ADDRESS,
+        abi: TournamentManagerABI,
+        functionName: "joinTournament",
+        chain: baseSepolia,
+        account: address,
+        args: [BigInt(tournamentId)],
+        value: BigInt(tournament.entryFee * 1e18),
+      });
+      console.log("Transaction hash:", hash);
+    } catch (error) {
+      console.log("Error", error);
+    }
+  };
+
+  const isTournamentPlayable = useMemo(() => {
+    if (!tournament) return false;
+
+    // Check if tournament has enough players to be playable
+    return tournament.playerCount >= tournament.maxPlayers;
+  }, [tournament]);
 
   // Handle spin game completion
-  const handleSpinComplete = (score: number, position: number) => {
-    console.log("Spin completed with score:", score, "position:", position);
+  const handleSpinComplete = (score: number) => {
+    console.log("Spin completed with score:", score);
     setUserScore(score);
-    setUserPosition(position);
-    setHasSpun(true);
-    
-    // Update player score and position after spinning
-    setTimeout(() => {
-      setTournament((prev) => ({
-        ...prev,
-        players: prev.players.map((player) =>
-          player.id === "current-user"
-            ? { ...player, score, position }
-            : player
-        ),
-      }));
-    }, 2000);
   };
 
-  // Sort players by position or score
-  const sortedPlayers = [...tournament.players].sort((a, b) => {
-    if (a.position && b.position) {
-      return a.position - b.position;
+  useEffect(() => {
+    // Only set tournament data once
+    if (!tournamentDetails || tournamentDataLoaded.current) return;
+
+    // Set the flag to true to prevent future updates
+    tournamentDataLoaded.current = true;
+
+    // Set the tournament data once
+    setTournament({
+      id: tournamentDetails.id,
+      name: tournamentDetails.name,
+      game: tournamentDetails.gameType,
+      description: "Tournament description",
+      tokenAddress: tournamentDetails.tokenAddress,
+      prizePool: tournamentDetails.entryFee * tournamentDetails.maxPlayers,
+      entryFee: tournamentDetails.entryFee,
+      playerCount: tournamentDetails.playerCount,
+      maxPlayers: tournamentDetails.maxPlayers,
+      startDate: tournamentDetails.startTime,
+      endDate: new Date(
+        tournamentDetails.startTime.getTime() + 5 * 60 * 60 * 1000
+      ),
+      status: tournamentDetails.status,
+      image: tournamentDetails.image,
+      organizer: {
+        name: "Kratos GG",
+        avatar: "https://api.dicebear.com/6.x/initials/svg?seed=ORG",
+      },
+      rules: [
+        "Follow tournament rules",
+        "No cheating allowed",
+        "Respect other players",
+      ],
+      players: [],
+      winners:
+        winners?.map((winner, index) => ({
+          id: winner,
+          name: `Winner ${index + 1}`,
+          avatar: `https://api.dicebear.com/6.x/avataaars/svg?seed=${index}`,
+          position: index + 1,
+        })) || [],
+    });
+  }, [tournamentDetails, winners]);
+
+  // Update the registration state management
+  useEffect(() => {
+    if (hasPlayed && userScoreFromContract !== null) {
+      // If player has played, set their score from the contract
+      setUserScore(userScoreFromContract);
     }
-    if (a.score && b.score) {
-      return b.score - a.score;
-    }
-    return 0;
+  }, [hasPlayed, userScoreFromContract]);
+
+  // Get token symbol from token data or use ETH as default
+  const { data: tokenData } = useToken({
+    address: tournament?.tokenAddress,
   });
+
+  const tokenSymbol = useMemo(() => {
+    return tokenData?.symbol || "ETH";
+  }, [tokenData]);
+
+  const hasTournamentStarted = useMemo(() => {
+    if (!tournament) return false;
+    const now = new Date();
+    return now >= tournament.startDate;
+  }, [tournament]);
+
+  // Check if the tournament is active (started but not completed)
+  const isTournamentActive = useMemo(() => {
+    if (!tournament) return false;
+    const now = new Date();
+    return now >= tournament.startDate && now <= tournament.endDate;
+  }, [tournament]);
+
+  // Loading state
+  if (isTournamentLoading) {
+    return (
+      <div className="flex justify-center items-center min-h-screen">
+        <Trophy className="h-12 w-12 text-primary animate-pulse" />
+      </div>
+    );
+  }
+  // Error state
+  if (tournamentError || !tournament) {
+    return (
+      <div className="flex justify-center items-center min-h-screen text-red-500">
+        Failed to load tournament details
+      </div>
+    );
+  }
 
   // Format date for display
   const formatDate = (date: Date) => {
@@ -223,6 +285,11 @@ export default function TournamentDetailsPage({ params }: { params: { id: string
       hour: "numeric",
       minute: "2-digit",
     });
+  };
+
+  const truncateAddress = (address) => {
+    if (!address) return "";
+    return `${address.slice(0, 6)}...${address.slice(-4)}`;
   };
 
   // Animation variants
@@ -245,12 +312,6 @@ export default function TournamentDetailsPage({ params }: { params: { id: string
     },
   };
 
-  // Debug function to force open spin game
-  const forceOpenSpinGame = () => {
-    console.log("Forcing open spin game");
-    setIsSpinGameOpen(true);
-  };
-
   return (
     <div className="min-h-screen bg-background pb-20">
       {/* Hero Section */}
@@ -261,7 +322,8 @@ export default function TournamentDetailsPage({ params }: { params: { id: string
             alt={tournament.name}
             className="w-full h-full object-cover"
           />
-          <div className="absolute inset-0 bg-gradient-to-b from-black/60 via-black/40 to-background"></div>
+          {/* Darker overlay for better text visibility */}
+          <div className="absolute inset-0 bg-gradient-to-b from-black/80 via-black/60 to-background"></div>
         </div>
 
         <div className="container mx-auto px-4 sm:px-6 lg:px-8 relative h-full flex flex-col justify-between py-6">
@@ -291,15 +353,16 @@ export default function TournamentDetailsPage({ params }: { params: { id: string
               variant="outline"
               className={`mb-2 font-medium ${
                 tournament.status === "upcoming"
-                  ? "border-blue-500 text-blue-500"
+                  ? "border-blue-500 text-blue-500 bg-blue-500/10"
                   : tournament.status === "ongoing"
-                  ? "border-green-500 text-green-500"
-                  : "border-gray-500 text-gray-500"
+                  ? "border-green-500 text-green-500 bg-green-500/10"
+                  : "border-gray-500 text-gray-500 bg-gray-500/10"
               }`}
             >
               {tournament.status === "upcoming" && (
                 <>
-                  <Clock className="mr-1 h-3 w-3" /> Starts in {timeRemaining}
+                  <Clock className="mr-1 h-3 w-3" /> Starts{" "}
+                  {formatRelativeTime(tournament.startDate)}
                 </>
               )}
               {tournament.status === "ongoing" && (
@@ -314,13 +377,18 @@ export default function TournamentDetailsPage({ params }: { params: { id: string
                 </>
               )}
             </Badge>
-            <h1 className="text-3xl md:text-4xl font-bold text-white mb-2">
+            {/* Larger, more prominent title with text shadow */}
+            <h1 className="text-3xl md:text-4xl font-bold text-white mb-2 drop-shadow-lg">
               {tournament.name}
             </h1>
-            <div className="flex flex-wrap gap-4 text-white/80">
+            {/* Increased contrast for details text */}
+            <div className="flex flex-wrap gap-4 text-white">
               <div className="flex items-center">
                 <Trophy className="mr-1 h-4 w-4 text-yellow-500" />
-                <span>${tournament.prizePool.toLocaleString()} Prize Pool</span>
+                <span>
+                  {tokenSymbol} {tournament.prizePool.toLocaleString()} Prize
+                  Pool
+                </span>
               </div>
               <div className="flex items-center">
                 <Users className="mr-1 h-4 w-4 text-blue-400" />
@@ -342,7 +410,11 @@ export default function TournamentDetailsPage({ params }: { params: { id: string
         <div className="flex flex-col lg:flex-row gap-6">
           {/* Main Column */}
           <div className="flex-1 order-2 lg:order-1">
-            <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
+            <Tabs
+              value={activeTab}
+              onValueChange={setActiveTab}
+              className="w-full"
+            >
               <TabsList className="w-full grid grid-cols-3 mb-6">
                 <TabsTrigger value="overview">Overview</TabsTrigger>
                 <TabsTrigger value="players">
@@ -364,7 +436,9 @@ export default function TournamentDetailsPage({ params }: { params: { id: string
                   <TabsContent value="overview" className="space-y-6">
                     <Card>
                       <CardContent className="p-6">
-                        <h3 className="text-xl font-semibold mb-4">Tournament Details</h3>
+                        <h3 className="text-xl font-semibold mb-4">
+                          Tournament Details
+                        </h3>
                         <p className="text-muted-foreground mb-6">
                           {tournament.description}
                         </p>
@@ -398,14 +472,17 @@ export default function TournamentDetailsPage({ params }: { params: { id: string
                               <h4 className="font-medium text-sm text-muted-foreground mb-1">
                                 Entry Fee
                               </h4>
-                              <p className="font-medium">${tournament.entryFee}</p>
+                              <p className="font-medium">
+                                {tournament.entryFee} {tokenSymbol}
+                              </p>
                             </div>
                             <div>
                               <h4 className="font-medium text-sm text-muted-foreground mb-1">
                                 Prize Pool
                               </h4>
                               <p className="font-medium">
-                                ${tournament.prizePool.toLocaleString()}
+                                {tournament.prizePool.toLocaleString()}{" "}
+                                {tokenSymbol}
                               </p>
                             </div>
                             <div>
@@ -432,7 +509,8 @@ export default function TournamentDetailsPage({ params }: { params: { id: string
                             <Trophy className="h-8 w-8 text-yellow-500 mx-auto mb-2" />
                             <h4 className="font-bold">1st Place</h4>
                             <p className="text-xl font-semibold">
-                              ${(tournament.prizePool * 0.5).toLocaleString()}
+                              {(tournament.prizePool * 0.5).toLocaleString()}{" "}
+                              {tokenSymbol}
                             </p>
                           </motion.div>
                           <motion.div
@@ -442,7 +520,8 @@ export default function TournamentDetailsPage({ params }: { params: { id: string
                             <Award className="h-8 w-8 text-gray-400 mx-auto mb-2" />
                             <h4 className="font-bold">2nd Place</h4>
                             <p className="text-xl font-semibold">
-                              ${(tournament.prizePool * 0.3).toLocaleString()}
+                              {(tournament.prizePool * 0.3).toLocaleString()}{" "}
+                              {tokenSymbol}
                             </p>
                           </motion.div>
                           <motion.div
@@ -452,7 +531,8 @@ export default function TournamentDetailsPage({ params }: { params: { id: string
                             <Award className="h-8 w-8 text-amber-600 mx-auto mb-2" />
                             <h4 className="font-bold">3rd Place</h4>
                             <p className="text-xl font-semibold">
-                              ${(tournament.prizePool * 0.2).toLocaleString()}
+                              {(tournament.prizePool * 0.2).toLocaleString()}{" "}
+                              {tokenSymbol}
                             </p>
                           </motion.div>
                         </div>
@@ -461,16 +541,17 @@ export default function TournamentDetailsPage({ params }: { params: { id: string
 
                     <Card>
                       <CardContent className="p-6">
-                        <h3 className="text-xl font-semibold mb-4">Organizer</h3>
+                        <h3 className="text-xl font-semibold mb-4">
+                          Organizer
+                        </h3>
                         <div className="flex items-center">
                           <Avatar className="h-12 w-12 mr-4">
                             <AvatarImage src={tournament.organizer.avatar} />
                             <AvatarFallback>ORG</AvatarFallback>
                           </Avatar>
                           <div>
-                            <p className="font-medium">{tournament.organizer.name}</p>
-                            <p className="text-sm text-muted-foreground">
-                              Verified Tournament Organizer
+                            <p className="font-medium">
+                              {tournament.organizer.name}
                             </p>
                           </div>
                         </div>
@@ -483,7 +564,8 @@ export default function TournamentDetailsPage({ params }: { params: { id: string
                       <CardContent className="p-6">
                         <div className="flex justify-between items-center mb-4">
                           <h3 className="text-xl font-semibold">
-                            Players ({tournament.playerCount}/{tournament.maxPlayers})
+                            Players ({tournament.playerCount}/
+                            {tournament.maxPlayers})
                           </h3>
                           <div className="text-sm text-muted-foreground">
                             {tournament.status === "completed"
@@ -495,58 +577,75 @@ export default function TournamentDetailsPage({ params }: { params: { id: string
                         </div>
 
                         <Progress
-                          value={(tournament.playerCount / tournament.maxPlayers) * 100}
+                          value={
+                            (tournament.playerCount / tournament.maxPlayers) *
+                            100
+                          }
                           className="h-2 mb-6"
                         />
 
                         <div className="space-y-2">
-                          {sortedPlayers.slice(0, 20).map((player, index) => (
-                            <motion.div
-                              key={player.id}
-                              initial={{ opacity: 0, y: 10 }}
-                              animate={{ opacity: 1, y: 0 }}
-                              transition={{ delay: index * 0.03 }}
-                              className={`flex items-center p-3 rounded-lg ${
-                                player.id === "current-user"
-                                  ? "bg-primary/10 border border-primary/20"
-                                  : "bg-muted/60"
-                              } ${index < 3 ? "border border-yellow-500/20" : ""}`}
-                            >
-                              <div className="w-8 text-center font-medium">
-                                {player.position ? `#${player.position}` : index + 1}
-                              </div>
-                              <Avatar className="h-8 w-8 mr-2">
-                                <AvatarImage src={player.avatar} />
-                                <AvatarFallback>
-                                  {player.name.charAt(0)}
-                                </AvatarFallback>
-                              </Avatar>
-                              <div className="flex-1 font-medium">
-                                {player.name}
-                                {player.id === "current-user" && (
-                                  <Badge variant="outline" className="ml-2 text-xs">
-                                    You
-                                  </Badge>
-                                )}
-                              </div>
-                              {player.score && (
-                                <div className="font-bold text-right">
-                                  {player.score}
+                          {sortedPlayers.slice(0, 20).map(
+                            (
+                              player: {
+                                id: `0x${string}`;
+                                name: string;
+                                avatar: string;
+                              },
+                              index: number
+                            ) => (
+                              <motion.div
+                                key={player.id} // Using player.id as key which should be unique
+                                initial={{ opacity: 0, y: 10 }}
+                                animate={{ opacity: 1, y: 0 }}
+                                transition={{ delay: index * 0.03 }}
+                                className={`flex items-center p-3 rounded-lg ${
+                                  player.id === address
+                                    ? "bg-primary/10 border border-primary/20"
+                                    : "bg-muted/60"
+                                } ${
+                                  index < 3 ? "border border-yellow-500/20" : ""
+                                }`}
+                              >
+                                <div className="w-8 text-center font-medium">
+                                  {index + 1}
                                 </div>
-                              )}
-                              {index < 3 && (
-                                <Trophy
-                                  className={`h-4 w-4 ml-2 ${
-                                    index === 0
-                                      ? "text-yellow-500"
-                                      : index === 1
-                                      ? "text-gray-400"
-                                      : "text-amber-600"
-                                  }`}
-                                />
-                              )}
-                            </motion.div>
-                          ))}
+                                <Avatar className="h-8 w-8 mr-2">
+                                  <AvatarImage src={player.avatar} />
+                                  <AvatarFallback>
+                                    {player.name.charAt(0)}
+                                  </AvatarFallback>
+                                </Avatar>
+                                <div className="flex-1">
+                                  <div className="font-medium">
+                                    {player.name}
+                                  </div>
+                                  <div className="text-xs text-muted-foreground">
+                                    {truncateAddress(player.id)}
+                                  </div>
+                                  {player.id === address && (
+                                    <Badge
+                                      variant="outline"
+                                      className="ml-2 text-xs"
+                                    >
+                                      You
+                                    </Badge>
+                                  )}
+                                </div>
+                                {index < 3 && (
+                                  <Trophy
+                                    className={`h-4 w-4 ml-2 ${
+                                      index === 0
+                                        ? "text-yellow-500"
+                                        : index === 1
+                                        ? "text-gray-400"
+                                        : "text-amber-600"
+                                    }`}
+                                  />
+                                )}
+                              </motion.div>
+                            )
+                          )}
                         </div>
 
                         {tournament.playerCount > 20 && (
@@ -561,7 +660,9 @@ export default function TournamentDetailsPage({ params }: { params: { id: string
                   <TabsContent value="rules" className="space-y-4">
                     <Card>
                       <CardContent className="p-6">
-                        <h3 className="text-xl font-semibold mb-4">Tournament Rules</h3>
+                        <h3 className="text-xl font-semibold mb-4">
+                          Tournament Rules
+                        </h3>
                         <div className="space-y-4">
                           {tournament.rules.map((rule, index) => (
                             <motion.div
@@ -588,18 +689,19 @@ export default function TournamentDetailsPage({ params }: { params: { id: string
                         </h3>
                         <div className="space-y-4 text-muted-foreground">
                           <p>
-                            All participants are expected to follow the code of conduct
-                            and demonstrate good sportsmanship throughout the tournament.
+                            All participants are expected to follow the code of
+                            conduct and demonstrate good sportsmanship
+                            throughout the tournament.
                           </p>
                           <p>
-                            Tournament officials will have the final say in all disputes
-                            and may disqualify players for rule violations or
-                            inappropriate behavior.
+                            Tournament officials will have the final say in all
+                            disputes and may disqualify players for rule
+                            violations or inappropriate behavior.
                           </p>
                           <p>
-                            By participating in this tournament, you agree to allow your
-                            gameplay to be streamed and/or recorded for promotional
-                            purposes.
+                            By participating in this tournament, you agree to
+                            allow your gameplay to be streamed and/or recorded
+                            for promotional purposes.
                           </p>
                         </div>
                       </CardContent>
@@ -622,32 +724,49 @@ export default function TournamentDetailsPage({ params }: { params: { id: string
                   <CardContent className="p-6">
                     {tournament.status === "upcoming" && !hasJoined && (
                       <>
-                        <h3 className="text-xl font-semibold mb-2">Join Tournament</h3>
+                        <h3 className="text-xl font-semibold mb-2">
+                          Join Tournament
+                        </h3>
                         <p className="text-muted-foreground mb-4">
-                          Register now to secure your spot in this exciting tournament!
+                          {tournament.playerCount >= tournament.maxPlayers
+                            ? "This tournament is full. No more players can join."
+                            : "Register now to secure your spot in this exciting tournament!"}
                         </p>
 
                         <div className="space-y-4">
                           <div className="bg-muted p-3 rounded-lg flex justify-between items-center">
-                            <span className="text-muted-foreground">Entry Fee</span>
+                            <span className="text-muted-foreground">
+                              Entry Fee
+                            </span>
                             <span className="font-bold text-lg">
-                              ${tournament.entryFee}
+                              {tournament.entryFee} {tokenSymbol}
                             </span>
                           </div>
 
-                          <Button
-                            className="w-full"
-                            size="lg"
-                            onClick={() => setIsPaymentOpen(true)}
-                          >
-                            <DollarSign className="mr-2 h-4 w-4" />
-                            Pay & Register
-                          </Button>
+                          {tournament.playerCount >= tournament.maxPlayers ? (
+                            <Button className="w-full" size="lg" disabled>
+                              <Lock className="mr-2 h-4 w-4" />
+                              Tournament Full
+                            </Button>
+                          ) : isRegistrationOpen() ? (
+                            <Button
+                              className="w-full"
+                              size="lg"
+                              onClick={joinTournament}
+                            >
+                              <DollarSign className="mr-2 h-4 w-4" />
+                              Join Tournament
+                            </Button>
+                          ) : (
+                            <Button className="w-full" size="lg" disabled>
+                              <Lock className="mr-2 h-4 w-4" />
+                              Registration Closed
+                            </Button>
+                          )}
                         </div>
                       </>
                     )}
-
-                    {hasJoined && hasSpun && (
+                    {hasJoined && !hasTournamentStarted && (
                       <>
                         <h3 className="text-xl font-semibold mb-2">
                           You are Registered!
@@ -655,12 +774,12 @@ export default function TournamentDetailsPage({ params }: { params: { id: string
                         <div className="bg-primary/10 border border-primary/20 rounded-lg p-4 mb-4">
                           <div className="text-center mb-2">
                             <Trophy className="h-8 w-8 text-primary mx-auto mb-1" />
-                            <h4 className="font-semibold text-lg">Your Score</h4>
-                            <p className="text-3xl font-bold">{userScore || 0}</p>
-                          </div>
-                          <div className="text-center">
-                            <h4 className="font-semibold">Your Position</h4>
-                            <p className="text-2xl font-bold">#{userPosition || 0}</p>
+                            <h4 className="font-semibold text-lg">
+                              Tournament Status
+                            </h4>
+                            <p className="text-lg font-medium">
+                              Waiting to Start
+                            </p>
                           </div>
                         </div>
 
@@ -676,32 +795,114 @@ export default function TournamentDetailsPage({ params }: { params: { id: string
                             </div>
                           </div>
 
-                          <Button className="w-full" variant="outline">
-                            View Your Dashboard
+                          <div className="text-center text-sm text-muted-foreground">
+                            The spin game will be available once the tournament
+                            starts
+                          </div>
+                        </div>
+                      </>
+                    )}
+                    {/* Joined and already played (or got score from contract) */}
+                    {hasJoined && (hasPlayed || userScore !== null) && (
+                      <>
+                        <h3 className="text-xl font-semibold mb-2">
+                          Your Tournament Entry
+                        </h3>
+                        <div className="bg-primary/10 border border-primary/20 rounded-lg p-4 mb-4">
+                          <div className="text-center mb-2">
+                            <Trophy className="h-8 w-8 text-primary mx-auto mb-1" />
+                            <h4 className="font-semibold text-lg">
+                              Your Score
+                            </h4>
+                            <p className="text-3xl font-bold">
+                              {userScore || userScoreFromContract || 0}
+                            </p>
+                          </div>
+                        </div>
+
+                        <div className="space-y-4">
+                          <div className="bg-muted p-3 rounded-lg">
+                            <div className="flex justify-between items-center">
+                              <span className="text-muted-foreground">
+                                Tournament{" "}
+                                {tournament.status === "completed"
+                                  ? "Ended"
+                                  : "Ends"}
+                              </span>
+                              <span className="font-medium">
+                                {formatDate(tournament.endDate)}
+                              </span>
+                            </div>
+                          </div>
+
+                          <Button
+                            className="w-full"
+                            variant="outline"
+                            disabled={tournament.status !== "completed"}
+                          >
+                            {tournament.status === "completed"
+                              ? "View Results"
+                              : "Results Available After Tournament"}
                           </Button>
                         </div>
                       </>
                     )}
 
-                    {hasJoined && !hasSpun && (
-                      <>
-                        <h3 className="text-xl font-semibold mb-2">
-                          Registration Complete!
-                        </h3>
-                        <p className="text-muted-foreground mb-4">
-                          Spin the wheel to determine your starting position.
-                        </p>
+                    {hasJoined &&
+                      hasTournamentStarted &&
+                      !hasPlayed &&
+                      isTournamentActive && (
+                        <>
+                          <h3 className="text-xl font-semibold mb-2">
+                            {isTournamentPlayable
+                              ? "Time to Play!"
+                              : "Waiting for Players"}
+                          </h3>
 
-                        <Button
-                          className="w-full bg-gradient-to-r from-yellow-500 to-yellow-600"
-                          size="lg"
-                          onClick={() => setIsSpinGameOpen(true)}
-                        >
-                          <RotateCcw className="mr-2 h-4 w-4" />
-                          Spin The Wheel
-                        </Button>
-                      </>
-                    )}
+                          {isTournamentPlayable ? (
+                            <>
+                              <p className="text-muted-foreground mb-4">
+                                Spin the wheel to determine your score and
+                                compete in the tournament.
+                              </p>
+
+                              <Button
+                                className="w-full bg-gradient-to-r from-yellow-500 to-yellow-600"
+                                size="lg"
+                                onClick={() => setIsSpinGameOpen(true)}
+                              >
+                                <RotateCcw className="mr-2 h-4 w-4" />
+                                Spin The Wheel
+                              </Button>
+                            </>
+                          ) : (
+                            <>
+                              <div className="bg-orange-500/10 border border-orange-500/20 rounded-lg p-4 mb-4">
+                                <div className="text-center">
+                                  <Users className="h-6 w-6 text-orange-500 mx-auto mb-2" />
+                                  <p className="text-sm text-muted-foreground">
+                                    {tournament.playerCount}/
+                                    {tournament.maxPlayers} players joined
+                                  </p>
+                                  <p className="text-sm text-muted-foreground mt-2">
+                                    This tournament requires all slots to be
+                                    filled before it can begin.
+                                  </p>
+                                </div>
+                              </div>
+
+                              <Button
+                                className="w-full"
+                                variant="outline"
+                                disabled
+                              >
+                                <Clock className="mr-2 h-4 w-4" />
+                                Waiting for More Players
+                              </Button>
+                            </>
+                          )}
+                        </>
+                      )}
 
                     {tournament.status === "ongoing" && !hasJoined && (
                       <>
@@ -709,7 +910,8 @@ export default function TournamentDetailsPage({ params }: { params: { id: string
                           Tournament In Progress
                         </h3>
                         <p className="text-muted-foreground mb-4">
-                          This tournament has already started. You can no longer join.
+                          This tournament has already started. You can no longer
+                          join.
                         </p>
 
                         <div className="bg-muted p-4 rounded-lg text-center">
@@ -727,13 +929,14 @@ export default function TournamentDetailsPage({ params }: { params: { id: string
                           Tournament Completed
                         </h3>
                         <p className="text-muted-foreground mb-4">
-                          This tournament has ended. View the final results and winners.
+                          This tournament has ended. View the final results and
+                          winners.
                         </p>
 
                         <div className="space-y-3 mb-4">
                           {[1, 2, 3].map((position) => (
                             <div
-                              key={position}
+                              key={`winner-position-${position}`}
                               className="flex items-center p-3 bg-muted rounded-lg"
                             >
                               <div
@@ -749,18 +952,30 @@ export default function TournamentDetailsPage({ params }: { params: { id: string
                               </div>
                               <div className="flex-1">
                                 <p className="font-medium">
-                                  {sortedPlayers[position - 1]?.name || `Player ${position}`}
+                                  {sortedPlayers[position - 1]?.name ||
+                                    `Player ${position}`}
                                 </p>
-                                <p className="text-sm text-muted-foreground">
-                                  Score: {sortedPlayers[position - 1]?.score || "N/A"}
-                                </p>
+                                {sortedPlayers[position - 1]?.id && (
+                                  <p className="text-xs text-muted-foreground">
+                                    {truncateAddress(
+                                      sortedPlayers[position - 1]?.id
+                                    )}
+                                  </p>
+                                )}
                               </div>
                               <div className="font-bold">
-                                ${position === 1 
-                                  ? (tournament.prizePool * 0.5).toLocaleString() 
-                                  : position === 2 
-                                    ? (tournament.prizePool * 0.3).toLocaleString() 
-                                    : (tournament.prizePool * 0.2).toLocaleString()}
+                                {position === 1
+                                  ? (
+                                      tournament.prizePool * 0.5
+                                    ).toLocaleString()
+                                  : position === 2
+                                  ? (
+                                      tournament.prizePool * 0.3
+                                    ).toLocaleString()
+                                  : (
+                                      tournament.prizePool * 0.2
+                                    ).toLocaleString()}{" "}
+                                {tokenSymbol}
                               </div>
                             </div>
                           ))}
@@ -776,28 +991,96 @@ export default function TournamentDetailsPage({ params }: { params: { id: string
                       </>
                     )}
 
-                    {/* Add a debug button to force open the spin game */}
-                    <Button
-                      variant="outline"
-                      className="w-full mt-6"
-                      onClick={forceOpenSpinGame}
-                    >
-                      Force Open Spin Game (Debug)
-                    </Button>
-
                     <div className="border-t mt-6 pt-6">
                       <h4 className="font-medium mb-2">Share Tournament</h4>
                       <div className="flex gap-2">
-                        {["twitter", "facebook", "discord", "copy"].map((platform) => (
-                          <Button
-                            key={platform}
-                            variant="outline"
-                            size="icon"
-                            className="flex-1"
+                        {/* Unique buttons with icons for each platform */}
+                        <Button
+                          key="twitter-share"
+                          variant="outline"
+                          size="icon"
+                          className="flex-1"
+                          onClick={() =>
+                            window.open(
+                              `https://twitter.com/intent/tweet?text=Join ${tournament.name}&url=${window.location.href}`,
+                              "_blank"
+                            )
+                          }
+                        >
+                          <svg
+                            xmlns="http://www.w3.org/2000/svg"
+                            width="16"
+                            height="16"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="2"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            className="lucide lucide-twitter"
                           >
-                            <Share2 className="h-4 w-4" />
-                          </Button>
-                        ))}
+                            <path d="M22 4s-.7 2.1-2 3.4c1.6 10-9.4 17.3-18 11.6 2.2.1 4.4-.6 6-2C3 15.5.5 9.6 3 5c2.2 2.6 5.6 4.1 9 4-.9-4.2 4-6.6 7-3.8 1.1 0 3-1.2 3-1.2z"></path>
+                          </svg>
+                        </Button>
+
+                        <Button
+                          key="discord-share"
+                          variant="outline"
+                          size="icon"
+                          className="flex-1"
+                          onClick={() =>
+                            window.open(`https://discord.com/`, "_blank")
+                          }
+                        >
+                          <svg
+                            xmlns="http://www.w3.org/2000/svg"
+                            width="16"
+                            height="16"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="2"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            className="lucide lucide-message-square"
+                          >
+                            <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
+                          </svg>
+                        </Button>
+
+                        <Button
+                          key="copy-link"
+                          variant="outline"
+                          size="icon"
+                          className="flex-1"
+                          onClick={() => {
+                            navigator.clipboard.writeText(window.location.href);
+                            // You could add a toast notification here
+                          }}
+                        >
+                          <svg
+                            xmlns="http://www.w3.org/2000/svg"
+                            width="16"
+                            height="16"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="2"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            className="lucide lucide-copy"
+                          >
+                            <rect
+                              width="14"
+                              height="14"
+                              x="8"
+                              y="8"
+                              rx="2"
+                              ry="2"
+                            ></rect>
+                            <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"></path>
+                          </svg>
+                        </Button>
                       </div>
                     </div>
                   </CardContent>
@@ -811,20 +1094,36 @@ export default function TournamentDetailsPage({ params }: { params: { id: string
                     <div className="space-y-4">
                       <div className="flex">
                         <div className="relative mr-4 flex flex-col items-center">
-                          <div className={`h-4 w-4 rounded-full ${tournament.status !== "upcoming" ? "bg-green-500" : "bg-muted"}`}></div>
+                          <div
+                            className={`h-4 w-4 rounded-full ${
+                              tournament.status !== "upcoming"
+                                ? "bg-green-500"
+                                : "bg-muted"
+                            }`}
+                          ></div>
                           <div className="h-full w-px bg-muted"></div>
                         </div>
                         <div className="pb-6">
                           <p className="font-medium">Registration</p>
                           <p className="text-sm text-muted-foreground">
-                            Closes {new Date(tournament.startDate.getTime() - 3600000).toLocaleString()}
+                            Closes{" "}
+                            {new Date(
+                              tournament.startDate.getTime() - 3600000
+                            ).toLocaleString()}
                           </p>
                         </div>
                       </div>
 
                       <div className="flex">
                         <div className="relative mr-4 flex flex-col items-center">
-                          <div className={`h-4 w-4 rounded-full ${tournament.status === "ongoing" || tournament.status === "completed" ? "bg-green-500" : "bg-muted"}`}></div>
+                          <div
+                            className={`h-4 w-4 rounded-full ${
+                              tournament.status === "ongoing" ||
+                              tournament.status === "completed"
+                                ? "bg-green-500"
+                                : "bg-muted"
+                            }`}
+                          ></div>
                           <div className="h-full w-px bg-muted"></div>
                         </div>
                         <div className="pb-6">
@@ -837,7 +1136,13 @@ export default function TournamentDetailsPage({ params }: { params: { id: string
 
                       <div className="flex">
                         <div className="relative mr-4 flex flex-col items-center">
-                          <div className={`h-4 w-4 rounded-full ${tournament.status === "completed" ? "bg-green-500" : "bg-muted"}`}></div>
+                          <div
+                            className={`h-4 w-4 rounded-full ${
+                              tournament.status === "completed"
+                                ? "bg-green-500"
+                                : "bg-muted"
+                            }`}
+                          ></div>
                         </div>
                         <div>
                           <p className="font-medium">Tournament Ends</p>
@@ -850,54 +1155,10 @@ export default function TournamentDetailsPage({ params }: { params: { id: string
                   </CardContent>
                 </Card>
               </motion.div>
-
-              <motion.div variants={itemVariants} className="mt-4">
-                <Card>
-                  <CardContent className="p-6">
-                    <h3 className="font-semibold mb-4">Related Tournaments</h3>
-                    <div className="space-y-3">
-                      {[1, 2, 3].map((i) => (
-                        <motion.div
-                          key={i}
-                          whileHover={{ x: 5 }}
-                          className="flex items-center gap-3 p-2 rounded-lg hover:bg-muted"
-                        >
-                          <img
-                            src={`https://images.unsplash.com/photo-154275111${i}-adc38448a05e?w=200&q=80`}
-                            alt={`Tournament ${i}`}
-                            className="w-12 h-12 rounded-md object-cover"
-                          />
-                          <div className="flex-1 min-w-0">
-                            <p className="font-medium truncate">
-                              {["Winter Championship", "Pro League Finals", "Battle Royale Masters"][i-1]}
-                            </p>
-                            <p className="text-sm text-muted-foreground">
-                              {["Fortnite", "League of Legends", "PUBG"][i-1]}
-                            </p>
-                          </div>
-                          <ArrowRight className="h-4 w-4 text-muted-foreground" />
-                        </motion.div>
-                      ))}
-                    </div>
-                  </CardContent>
-                </Card>
-              </motion.div>
             </motion.div>
           </div>
         </div>
       </div>
-
-      {/* Payment Popup */}
-      <PaymentPopup
-        isOpen={isPaymentOpen}
-        onClose={() => setIsPaymentOpen(false)}
-        onPaymentSuccess={handlePaymentSuccess}
-        tournamentName={tournament.name}
-        entryFee={tournament.entryFee}
-        discount={10}
-        tournamentImage={tournament.image}
-        startDate={tournament.startDate}
-      />
 
       {/* Spin Game Popup - Make sure it's rendered regardless of isSpinGameOpen */}
       <SpinGame
@@ -906,14 +1167,16 @@ export default function TournamentDetailsPage({ params }: { params: { id: string
           console.log("Closing spin game");
           setIsSpinGameOpen(false);
         }}
-        onComplete={(score, position) => {
-          console.log("Spin complete with score:", score, "position:", position);
-          handleSpinComplete(score, position);
+        onComplete={(score: number) => {
+          console.log("Spin complete with score:", score);
+          handleSpinComplete(score);
         }}
         tournamentName={tournament.name}
         tournamentEndTime={tournament.endDate.toISOString()}
-        canSpin={true} // Always allow spinning for debug purposes
-        playerCount={tournament.maxPlayers}
+        canSpin={hasTournamentStarted && isTournamentPlayable} // Only allow spin if tournament has started AND has enough players
+        tournamentId={tournamentId}
+        playerCount={tournament.playerCount}
+        maxPlayers={tournament.maxPlayers}
       />
     </div>
   );

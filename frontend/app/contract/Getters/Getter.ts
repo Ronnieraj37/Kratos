@@ -1,249 +1,412 @@
-// hooks/useTournament.js
-import { TournamentManager } from "@/abi/artifacts/TournamentManager";
-import { PlayerBadge } from "@/abi/artifacts/PlayerBadge";
-import { TOURNAMENT_MANAGER_ADDRESS, PLAYER_BADGE_ADDRESS } from "../../constants";
-import { sepolia } from "viem/chains";
-import { useReadContract, useWriteContract, useAccount, useWaitForTransactionReceipt } from "wagmi";
-import { parseEther, formatEther } from "viem";
-import { useState, useEffect } from "react";
+// hooks/useTournament.ts
+import { useReadContract } from "wagmi";
+import { baseSepolia } from "viem/chains";
+import { Address, erc20Abi, formatEther } from "viem";
 
-// Read Functions
+// Import ABIs - replace with your actual ABI imports
+import { TournamentManagerABI } from "../abi/TournamentManager";
+import { PlayerBadgeABI } from "../abi/PlayerBadge";
 
-export const useTournamentDetails = (tournamentId) => {
-  const { data, isLoading, error } = useReadContract({
-    chainId: sepolia.id,
-    abi: TournamentManager,
-    address: TOURNAMENT_MANAGER_ADDRESS,
-    functionName: "getTournamentDetails",
-    args: [tournamentId],
-  });
+// Import constants - replace with your actual addresses
+import {
+  TOURNAMENT_MANAGER_ADDRESS,
+  PLAYER_BADGE_ADDRESS,
+} from "../../constants";
 
-  // Transform the contract data into a more frontend-friendly format
-  const tournamentDetails = data ? {
-    name: data[0],
-    entryFee: data[1],
-    tokenAddress: data[2],
-    activePlayers: data[3],
-    maxPlayers: data[4],
-    startTime: new Date(Number(data[5]) * 1000),
-    endTime: new Date(Number(data[6]) * 1000),
-    joinDeadline: new Date(Number(data[7]) * 1000),
-    scoreSubmissionDeadline: new Date(Number(data[8]) * 1000),
-    amountInTournament: data[9],
-    status: getTournamentStatus(data[10]), // Convert from enum to string
-    prizesDistributed: data[11]
-  } : null;
-
-  return { tournamentDetails, isLoading, error };
-};
-
-export const useTournamentParticipants = (tournamentId) => {
-  const { data: participants, isLoading, error } = useReadContract({
-    chainId: sepolia.id,
-    abi: TournamentManager,
-    address: TOURNAMENT_MANAGER_ADDRESS,
-    functionName: "getTournamentParticipants",
-    args: [tournamentId],
-  });
-
-  return { participants, isLoading, error };
-};
-
-export const useTournamentWinners = (tournamentId) => {
-  const { data: winners, isLoading, error } = useReadContract({
-    chainId: sepolia.id,
-    abi: TournamentManager,
-    address: TOURNAMENT_MANAGER_ADDRESS,
-    functionName: "getTournamentWinners",
-    args: [tournamentId],
-  });
-
-  return { winners, isLoading, error };
-};
-
-export const usePlayerScore = (tournamentId, playerAddress) => {
-  const { data: score, isLoading, error } = useReadContract({
-    chainId: sepolia.id,
-    abi: TournamentManager,
-    address: TOURNAMENT_MANAGER_ADDRESS,
-    functionName: "getPlayerScore",
-    args: [tournamentId, playerAddress],
-    enabled: !!playerAddress
-  });
-
-  return { score, isLoading, error };
-};
-
-export const usePlayerTournaments = (playerAddress) => {
-  const { data: tournamentIds, isLoading, error } = useReadContract({
-    chainId: sepolia.id,
-    abi: TournamentManager,
-    address: TOURNAMENT_MANAGER_ADDRESS,
-    functionName: "getPlayerTournaments",
-    args: [playerAddress],
-    enabled: !!playerAddress
-  });
-
-  return { tournamentIds, isLoading, error };
-};
-
-export const usePlayerJoinedTournament = (tournamentId, playerAddress) => {
-  const { data: hasJoined, isLoading, error } = useReadContract({
-    chainId: sepolia.id,
-    abi: TournamentManager,
-    address: TOURNAMENT_MANAGER_ADDRESS,
-    functionName: "hasPlayerJoined",
-    args: [tournamentId, playerAddress],
-    enabled: !!playerAddress
-  });
-
-  return { hasJoined, isLoading, error };
-};
-
-export const usePlayerDiscount = (playerAddress) => {
-  // First check if player has a badge
-  const { data: badgeBalance, isLoading: balanceLoading } = useReadContract({
-    chainId: sepolia.id,
-    abi: PlayerBadge,
-    address: PLAYER_BADGE_ADDRESS,
-    functionName: "balanceOf",
-    args: [playerAddress],
-    enabled: !!playerAddress
-  });
-
-  // Then get the discount percentage if they have a badge
-  const { data: discountPercentage, isLoading: discountLoading } = useReadContract({
-    chainId: sepolia.id,
-    abi: PlayerBadge,
-    address: PLAYER_BADGE_ADDRESS,
-    functionName: "discountPercentage",
-    enabled: !!badgeBalance && badgeBalance > 0
-  });
-
-  const hasBadge = badgeBalance && badgeBalance > 0;
-  const discount = hasBadge ? discountPercentage || 0 : 0;
-  const isLoading = balanceLoading || discountLoading;
-
-  return { hasBadge, discount, isLoading };
-};
-
-// Write Functions
-
-export const useRegisterPlayer = () => {
-  const { writeContractAsync, isPending, error } = useWriteContract();
-  const { address } = useAccount();
-
-  const registerPlayer = async () => {
-    if (!address) throw new Error("Wallet not connected");
-    
-    try {
-      const hash = await writeContractAsync({
-        abi: TournamentManager,
-        address: TOURNAMENT_MANAGER_ADDRESS,
-        functionName: 'registerPlayer',
-      });
-      
-      return hash;
-    } catch (err) {
-      console.error("Error registering player:", err);
-      throw err;
-    }
-  };
-
-  return { registerPlayer, isPending, error };
-};
-
-export const useJoinTournament = (tournamentId) => {
-  const { writeContractAsync, isPending, error } = useWriteContract();
-  const { address } = useAccount();
-  const { tournamentDetails } = useTournamentDetails(tournamentId);
-  const { discount } = usePlayerDiscount(address);
-
-  const joinTournament = async () => {
-    if (!address) throw new Error("Wallet not connected");
-    if (!tournamentDetails) throw new Error("Tournament details not loaded");
-    
-    try {
-      // Calculate entry fee with discount if applicable
-      let entryFeeValue = tournamentDetails.entryFee;
-      if (discount > 0) {
-        entryFeeValue = entryFeeValue * (100 - discount) / 100;
-      }
-      
-      // For ETH tournaments
-      if (tournamentDetails.tokenAddress === "0x0000000000000000000000000000000000000000") {
-        const hash = await writeContractAsync({
-          abi: TournamentManager,
-          address: TOURNAMENT_MANAGER_ADDRESS,
-          functionName: 'joinTournament',
-          args: [tournamentId],
-          value: entryFeeValue
-        });
-        return hash;
-      } else {
-        // For ERC20 token tournaments, first need to approve tokens
-        // This is a simplified example - in practice you'd want to:
-        // 1. First check allowance
-        // 2. If allowance insufficient, approve tokens
-        // 3. Then join tournament
-        const hash = await writeContractAsync({
-          abi: TournamentManager,
-          address: TOURNAMENT_MANAGER_ADDRESS,
-          functionName: 'joinTournament',
-          args: [tournamentId]
-        });
-        return hash;
-      }
-    } catch (err) {
-      console.error("Error joining tournament:", err);
-      throw err;
-    }
-  };
-
-  return { joinTournament, isPending, error };
-};
-
-// Helper Functions 
-function getTournamentStatus(statusEnum) {
-  const statuses = ["Open", "InProgress", "Completed", "Cancelled"];
-  return statuses[statusEnum] || "Unknown";
+// Define types for tournament data
+export interface TournamentData {
+  id: string;
+  name: string;
+  entryFee: number;
+  tokenAddress: Address;
+  playerCount: number;
+  maxPlayers: number;
+  startTime: Date;
+  endTime: Date;
+  prizePool: number;
+  status: "upcoming" | "ongoing" | "completed";
+  gameType: string;
+  image: string;
 }
 
-// Hook to get all active tournaments
-export const useActiveTournaments = () => {
-  const [tournaments, setTournaments] = useState([]);
-  const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState(null);
-  
-  // This is a placeholder - in a real implementation you would:
-  // 1. Have a function in your contract to get all active tournaments or indices
-  // 2. Use that to fetch the tournaments
-  
-  useEffect(() => {
-    // Simulate fetching tournaments
-    // In reality you would need to:
-    // - Get the tournament count from contract
-    // - Fetch each tournament's details in a loop or batch
-    const fetchTournaments = async () => {
-      try {
-        setIsLoading(true);
-        // Placeholder - replace with actual contract calls
-        const mockTournaments = Array(5).fill().map((_, i) => ({
-          id: String(i + 1),
-          // ... fetch each tournament from contract
-        }));
-        
-        setTournaments(mockTournaments);
-      } catch (err) {
-        console.error("Error fetching tournaments:", err);
-        setError(err);
-      } finally {
-        setIsLoading(false);
-      }
+// Map contract status to UI status
+function mapStatus(status: number): "upcoming" | "ongoing" | "completed" {
+  switch (status) {
+    case 0:
+      return "upcoming"; // Open
+    case 1:
+      return "ongoing"; // InProgress
+    case 2:
+      return "completed"; // Completed
+    default:
+      return "upcoming";
+  }
+}
+
+/**
+ * Hook to get all open tournaments IDs
+ */
+export const useOpenTournamentIds = () => {
+  const { data, isLoading, error, refetch } = useReadContract({
+    chainId: baseSepolia.id,
+    address: TOURNAMENT_MANAGER_ADDRESS,
+    abi: TournamentManagerABI,
+    functionName: "getOpenTournaments",
+  });
+
+  return {
+    tournamentIds: data as readonly bigint[] | undefined,
+    isLoading,
+    error,
+    refetch,
+  };
+};
+
+export const useGetTokenSymbol = ({
+  tokenAddress,
+}: {
+  tokenAddress: `0x{string}`;
+}) => {
+  const { data, isLoading, error } = useReadContract({
+    chainId: baseSepolia.id,
+    address: tokenAddress,
+    abi: erc20Abi,
+    functionName: "symbol",
+  });
+
+  return {
+    tokenSymbol: data as string,
+    isLoading,
+    error,
+  };
+};
+
+/**
+ * Hook to get all in-progress tournaments IDs
+ */
+export const useInProgressTournamentIds = () => {
+  const { data, isLoading, error, refetch } = useReadContract({
+    chainId: baseSepolia.id,
+    address: TOURNAMENT_MANAGER_ADDRESS,
+    abi: TournamentManagerABI,
+    functionName: "getInProgressTournaments",
+  });
+
+  return {
+    tournamentIds: data as readonly bigint[] | undefined,
+    isLoading,
+    error,
+    refetch,
+  };
+};
+
+/**
+ * Hook to get all completed tournaments IDs
+ */
+export const useCompletedTournamentIds = () => {
+  const { data, isLoading, error, refetch } = useReadContract({
+    chainId: baseSepolia.id,
+    address: TOURNAMENT_MANAGER_ADDRESS,
+    abi: TournamentManagerABI,
+    functionName: "getCompletedTournaments",
+  });
+
+  return {
+    tournamentIds: data as readonly bigint[] | undefined,
+    isLoading,
+    error,
+    refetch,
+  };
+};
+
+/**
+ * Hook to get owner
+ */
+export const useGetOwner = () => {
+  const { data, isLoading, error } = useReadContract({
+    chainId: baseSepolia.id,
+    address: TOURNAMENT_MANAGER_ADDRESS,
+    abi: TournamentManagerABI,
+    functionName: "owner",
+  });
+
+  return {
+    owner: data as `0x${string}`,
+    isLoading,
+    error,
+  };
+};
+
+/**
+ * Hook to get tournament details for a single tournament
+ */
+export const useTournamentDetails = (tournamentId: string) => {
+  // Only call when tournamentId is available
+  const args = [BigInt(tournamentId)];
+
+  const { data, isLoading, error, refetch } = useReadContract({
+    chainId: baseSepolia.id,
+    address: TOURNAMENT_MANAGER_ADDRESS,
+    abi: TournamentManagerABI,
+    functionName: "getExtendedTournamentDetails",
+    args,
+  });
+
+  // Type for the data returned from the contract
+  type TournamentDetailsTuple = [
+    string, // name
+    bigint, // entryFee
+    Address, // tokenAddress
+    bigint, // activePlayers
+    bigint, // maxPlayers
+    bigint, // startTime
+    bigint, // endTime
+    bigint, // amountInTournament
+    bigint, // status
+    string, // gameType
+    string // imageURI
+  ];
+
+  // Process the data if available
+  let tournamentDetails: TournamentData | null = null;
+
+  if (data && tournamentId) {
+    const [
+      name,
+      entryFee,
+      tokenAddress,
+      activePlayers,
+      maxPlayers,
+      startTime,
+      endTime,
+      amountInTournament,
+      status,
+      gameType,
+      imageURI,
+    ] = data as TournamentDetailsTuple;
+
+    tournamentDetails = {
+      id: tournamentId,
+      name,
+      entryFee: Number(formatEther(entryFee)),
+      tokenAddress,
+      playerCount: Number(activePlayers),
+      maxPlayers: Number(maxPlayers),
+      startTime: new Date(Number(startTime) * 1000),
+      endTime: new Date(Number(endTime) * 1000),
+      prizePool: Number(formatEther(amountInTournament)),
+      status: mapStatus(Number(status)),
+      gameType: gameType || "Unknown",
+      image:
+        imageURI ||
+        "https://images.unsplash.com/photo-1560253023-3ec5d502959f?w=800&q=80",
     };
-    
-    fetchTournaments();
-  }, []);
-  
-  return { tournaments, isLoading, error };
+  }
+
+  return {
+    tournamentDetails,
+    isLoading,
+    error,
+    refetch,
+  };
+};
+
+/**
+ * Hook to check if a player has joined a tournament
+ */
+export const usePlayerJoinedTournament = (
+  tournamentId: string,
+  playerAddress: Address
+) => {
+  // Only call when both parameters are available
+  const args =
+    tournamentId && playerAddress
+      ? [BigInt(tournamentId), playerAddress]
+      : undefined;
+
+  const { data, isLoading, error } = useReadContract({
+    chainId: baseSepolia.id,
+    address: TOURNAMENT_MANAGER_ADDRESS,
+    abi: TournamentManagerABI,
+    functionName: "hasPlayerJoined",
+    args,
+  });
+
+  return { hasJoined: data as boolean | undefined, isLoading, error };
+};
+
+/**
+ * Hook to get tournament participants
+ */
+export const useTournamentParticipants = (tournamentId: string) => {
+  // Only call when tournamentId is available
+  const args = tournamentId ? [BigInt(tournamentId)] : undefined;
+
+  const { data, isLoading, error } = useReadContract({
+    chainId: baseSepolia.id,
+    address: TOURNAMENT_MANAGER_ADDRESS,
+    abi: TournamentManagerABI,
+    functionName: "getTournamentParticipants",
+    args,
+  });
+
+  return { participants: data as Address[] | undefined, isLoading, error };
+};
+
+/**
+ * Hook to get tournament winners
+ */
+export const useTournamentWinners = (tournamentId: string) => {
+  // Only call when tournamentId is available
+  const args = tournamentId ? [BigInt(tournamentId)] : undefined;
+
+  const { data, isLoading, error } = useReadContract({
+    chainId: baseSepolia.id,
+    address: TOURNAMENT_MANAGER_ADDRESS,
+    abi: TournamentManagerABI,
+    functionName: "getTournamentWinners",
+    args,
+  });
+
+  return { winners: data as Address[] | undefined, isLoading, error };
+};
+
+/**
+ * Hook to get player score in a tournament
+ */
+export const usePlayerScore = (
+  tournamentId: string,
+  playerAddress: Address
+) => {
+  // Only call when both parameters are available
+  const args =
+    tournamentId && playerAddress
+      ? [BigInt(tournamentId), playerAddress]
+      : undefined;
+
+  const { data, isLoading, error } = useReadContract({
+    chainId: baseSepolia.id,
+    address: TOURNAMENT_MANAGER_ADDRESS,
+    abi: TournamentManagerABI,
+    functionName: "getPlayerScore",
+    args,
+  });
+
+  return { score: data as bigint | undefined, isLoading, error };
+};
+
+/**
+ * Hook to get player details
+ */
+export const usePlayerDetails = (playerAddress: Address) => {
+  // Only call when playerAddress is available
+  const args = playerAddress ? [playerAddress] : undefined;
+
+  const { data, isLoading, error } = useReadContract({
+    chainId: baseSepolia.id,
+    address: TOURNAMENT_MANAGER_ADDRESS,
+    abi: TournamentManagerABI,
+    functionName: "getPlayerDetails",
+    args,
+  });
+
+  // Type for player details
+  type PlayerDetailsTuple = [
+    bigint, // playerId
+    bigint, // totalWinnings
+    bigint // tournamentCount
+  ];
+
+  // Parse player details if available
+  let playerDetails = null;
+  if (data) {
+    const [playerId, totalWinnings, tournamentCount] =
+      data as PlayerDetailsTuple;
+    playerDetails = {
+      playerId: Number(playerId),
+      totalWinnings: Number(formatEther(totalWinnings)),
+      tournamentCount: Number(tournamentCount),
+    };
+  }
+
+  return {
+    playerDetails,
+    isLoading,
+    error,
+  };
+};
+
+/**
+ * Hook to check if a player is registered
+ */
+export const useIsPlayerRegistered = (playerAddress: Address) => {
+  // Only call when playerAddress is available
+  const args = playerAddress ? [playerAddress] : undefined;
+
+  const { data, isLoading, error } = useReadContract({
+    chainId: baseSepolia.id,
+    address: TOURNAMENT_MANAGER_ADDRESS,
+    abi: TournamentManagerABI,
+    functionName: "isPlayerRegistered",
+    args,
+  });
+
+  return { isRegistered: data as boolean | undefined, isLoading, error };
+};
+
+/**
+ * Hook to get discounted entry fee for a player
+ */
+export const useDiscountedEntryFee = (
+  tournamentId: string,
+  playerAddress: Address
+) => {
+  // Only call when both parameters are available
+  const args =
+    tournamentId && playerAddress
+      ? [BigInt(tournamentId), playerAddress]
+      : undefined;
+
+  const { data, isLoading, error } = useReadContract({
+    chainId: baseSepolia.id,
+    address: TOURNAMENT_MANAGER_ADDRESS,
+    abi: TournamentManagerABI,
+    functionName: "getDiscountedEntryFee",
+    args,
+  });
+
+  return { discountedFee: data as bigint | undefined, isLoading, error };
+};
+
+/**
+ * Hook to get badge discount for a player
+ */
+export const usePlayerBadgeDiscount = (playerAddress: Address) => {
+  // Only call balanceOf when playerAddress is available
+  const balanceArgs = playerAddress ? [playerAddress] : undefined;
+
+  const { data: badgeBalance, isLoading: balanceLoading } = useReadContract({
+    chainId: baseSepolia.id,
+    address: PLAYER_BADGE_ADDRESS,
+    abi: PlayerBadgeABI,
+    functionName: "balanceOf",
+    args: balanceArgs,
+  });
+
+  const hasBadge = !!(badgeBalance && Number(badgeBalance) > 0);
+
+  // Only call discountPercentage if the player has a badge
+  const { data: discountPercentage, isLoading: discountLoading } =
+    useReadContract({
+      chainId: baseSepolia.id,
+      address: PLAYER_BADGE_ADDRESS,
+      abi: PlayerBadgeABI,
+      functionName: "discountPercentage",
+    });
+
+  return {
+    hasBadge,
+    discountPercentage: discountPercentage as number | undefined,
+    isLoading: balanceLoading || discountLoading,
+  };
 };
