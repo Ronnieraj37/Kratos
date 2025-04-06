@@ -7,7 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { CalendarIcon, Trophy, Users, DollarSign, Clock } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import Link from "next/link";
-import { useTournamentDetails } from "@/app/contract/getters/Getter";
+import { useTournamentDetails } from "@/app/contract/getters/useTournament";
 import { useToken } from "wagmi";
 
 interface TournamentCardProps {

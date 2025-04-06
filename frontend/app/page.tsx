@@ -36,7 +36,7 @@ import {
   useCompletedTournamentIds,
   useGetOwner,
   useIsPlayerRegistered,
-} from "./contract/getters/Getter";
+} from "./contract/getters/useTournament";
 import { useAccount, useWriteContract } from "wagmi";
 import { TOURNAMENT_MANAGER_ADDRESS } from "./constants";
 import { TournamentManagerABI } from "./contract/abi/TournamentManager";

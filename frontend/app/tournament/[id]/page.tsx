@@ -31,7 +31,7 @@ import {
   useTournamentWinners,
   usePlayerScore,
   useTournamentParticipants,
-} from "../../contract/getters/Getter";
+} from "../../contract/getters/useTournament";
 import { useAccount, useToken, useWriteContract } from "wagmi";
 import { TOURNAMENT_MANAGER_ADDRESS } from "@/app/constants";
 import { TournamentManagerABI } from "@/app/contract/abi/TournamentManager";
