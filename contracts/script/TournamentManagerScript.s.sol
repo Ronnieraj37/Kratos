@@ -35,12 +35,7 @@ contract TournamentManagerScript is Script {
         // Create tournaments
         // ETH Tournament
         tournamentManager.createTournament(
-            "ETH Tournament #1",
-            0.01 ether,
-            address(0),
-            4,
-            block.timestamp + 1 hours,
-            block.timestamp + 2 hours
+            "ETH Tournament #1", 0.01 ether, address(0), 4, block.timestamp + 1 hours, block.timestamp + 2 hours
         );
 
         // Token Tournament

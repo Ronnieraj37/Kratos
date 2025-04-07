@@ -3,9 +3,10 @@ pragma solidity ^0.8.28;
 
 abstract contract ReentrancyGuardTransient {
     bool transient locked;
+    error ReentrancyAttempt();
 
     modifier nonReentrant {
-        require(!locked, "Reentrancy attempt");
+        if(locked) revert ReentrancyAttempt(); 
 
         locked = true;
 

@@ -22,12 +22,10 @@ contract PlayerBadge is ERC721Enumerable, Ownable {
     // Discount percentage for badge holders (e.g., 20 = 20% discount)
     uint8 public discountPercentage;
 
-    constructor(
-        string memory name,
-        string memory symbol,
-        string memory baseTokenURI,
-        uint8 _discountPercentage
-    ) ERC721(name, symbol) Ownable(msg.sender) {
+    constructor(string memory name, string memory symbol, string memory baseTokenURI, uint8 _discountPercentage)
+        ERC721(name, symbol)
+        Ownable(msg.sender)
+    {
         _baseTokenURI = baseTokenURI;
         discountPercentage = _discountPercentage;
     }
@@ -47,13 +45,8 @@ contract PlayerBadge is ERC721Enumerable, Ownable {
     }
 
     //TODO: transfer this to facotry contract
-    function setDiscountPercentage(
-        uint8 _discountPercentage
-    ) external onlyOwner {
-        require(
-            _discountPercentage <= 100,
-            "Discount percentage cannot exceed 100"
-        );
+    function setDiscountPercentage(uint8 _discountPercentage) external onlyOwner {
+        require(_discountPercentage <= 100, "Discount percentage cannot exceed 100");
         discountPercentage = _discountPercentage;
     }
 }
@@ -63,6 +56,17 @@ contract PlayerBadge is ERC721Enumerable, Ownable {
  * @dev Main contract for tournament management and gameplay
  */
 contract TournamentManager is Ownable, ReentrancyGuardTransient {
+    error ZeroAddress();
+    error InvalidMaxPlayers();
+    error PlayerAlreadyRegistered();
+    error PlayerNotRegistered();
+    error InvalidStartTime();
+    error TournamentDoesNotExist();
+    error TournamentNotOpen();
+    error TournamentNotInProgress();
+    error TournamentFull();
+    error PlayerNotInTournament();  
+
     using SafeERC20 for IERC20;
     // Manual ID trackers
 
@@ -97,11 +101,11 @@ contract TournamentManager is Ownable, ReentrancyGuardTransient {
         uint256 maxPlayers;
         uint256 startTime;
         uint256 endTime;
-        uint256 joinDeadline; // TODO: Remove this
+        uint256 joinDeadline;
         uint256 scoreSubmissionDeadline; // Time after which scores can't be submitted
         uint256 amountInTournament;
         TournamentStatus status;
-        bool prizesDistributed; // TOOO: Remove this
+        bool prizesDistributed;
         mapping(uint256 id => address playerAddress) participants;
         mapping(address => bool) hasJoined;
         mapping(address => uint256) playerScores;
@@ -115,52 +119,20 @@ contract TournamentManager is Ownable, ReentrancyGuardTransient {
 
     // Constructor
     constructor(address _playerBadgeAddress) Ownable(msg.sender) {
-        if (_playerBadgeAddress != address(0)) {
-            playerBadgeContract = PlayerBadge(_playerBadgeAddress);
-        } else {
-            revert();
-        }
+        if (_playerBadgeAddress == address(0)) revert ZeroAddress();
+        playerBadgeContract = PlayerBadge(_playerBadgeAddress);
     }
 
     // Events
     event PlayerRegistered(uint256 playerId, address playerAddress);
-    event TournamentCreated(
-        uint256 tournamentId,
-        string name,
-        uint256 entryFee,
-        uint256 maxPlayers,
-        uint256 startTime
-    );
-    event PlayerJoinedTournament(
-        uint256 tournamentId,
-        address playerAddress,
-        uint256 entryFee
-    );
-    event TournamentStatusChanged(
-        uint256 tournamentId,
-        TournamentStatus status
-    );
-    event ScoreSubmitted(
-        uint256 tournamentId,
-        address playerAddress,
-        uint256 score
-    );
-    event BatchScoresSubmitted(
-        uint256 tournamentId,
-        address[] playerAddresses,
-        uint256[] scores
-    );
-    event TournamentCompleted(
-        uint256 tournamentId,
-        address[] winners,
-        uint256[] prizes
-    );
+    event TournamentCreated(uint256 tournamentId, string name, uint256 entryFee, uint256 maxPlayers, uint256 startTime);
+    event PlayerJoinedTournament(uint256 tournamentId, address playerAddress, uint256 entryFee);
+    event TournamentStatusChanged(uint256 tournamentId, TournamentStatus status);
+    event ScoreSubmitted(uint256 tournamentId, address playerAddress, uint256 score);
+    event BatchScoresSubmitted(uint256 tournamentId, address[] playerAddresses, uint256[] scores);
+    event TournamentCompleted(uint256 tournamentId, address[] winners, uint256[] prizes);
     event TournamentCancelled(uint256 tournamentId, string reason);
-    event PrizesDistributed(
-        uint256 tournamentId,
-        address[] winners,
-        uint256[] amounts
-    );
+    event PrizesDistributed(uint256 tournamentId, address[] winners, uint256[] amounts);
     event RefundsProcessed(uint256 tournamentId);
 
     // Constants
@@ -173,28 +145,32 @@ contract TournamentManager is Ownable, ReentrancyGuardTransient {
 
     // Modifiers
     modifier onlyRegisteredPlayer() {
-        require(players[msg.sender].playerId != 0, "Player not registered");
+        if (players[msg.sender].playerId == 0) revert PlayerNotRegistered();
         _;
     }
 
     modifier tournamentExists(uint256 tournamentId) {
-        require(tournamentId < _nextTournamentId, "Tournament does not exist");
+        if (tournamentId >= _nextTournamentId) revert TournamentDoesNotExist();
         _;
     }
 
     modifier tournamentOpen(uint256 tournamentId) {
-        require(
-            tournaments[tournamentId].status == TournamentStatus.Open,
-            "Tournament is not open for joining"
-        );
+        if (tournaments[tournamentId].status != TournamentStatus.Open) revert TournamentNotOpen();
         _;
     }
 
     modifier tournamentInProgress(uint256 tournamentId) {
-        require(
-            tournaments[tournamentId].status == TournamentStatus.InProgress,
-            "Tournament is not in progress"
-        );
+        if (tournaments[tournamentId].status != TournamentStatus.InProgress) revert TournamentNotInProgress();
+        _;
+    }
+
+    modifier tournamentNotFull(uint256 tournamentId) {
+        if (tournaments[tournamentId].activePlayers == tournaments[tournamentId].maxPlayers) revert TournamentFull();
+        _;
+    }
+
+    modifier playerInTournament(uint256 tournamentId , address playerAddress) {
+        if (!tournaments[tournamentId].hasJoined[playerAddress]) revert PlayerNotInTournament();
         _;
     }
 
@@ -202,66 +178,22 @@ contract TournamentManager is Ownable, ReentrancyGuardTransient {
      * @dev Set the player badge contract address
      * @param _playerBadgeAddress Address of the PlayerBadge contract
      */
-    function setPlayerBadgeContract(
-        address _playerBadgeAddress
-    ) external onlyOwner {
-        require(_playerBadgeAddress != address(0), "Invalid address");
+    function setPlayerBadgeContract(address _playerBadgeAddress) external onlyOwner {
+        if (_playerBadgeAddress == address(0)) revert ZeroAddress();
         playerBadgeContract = PlayerBadge(_playerBadgeAddress);
-    }
-
-    // Getter function for tournament details to help with testing
-    function getTournamentDetails(
-        uint256 tournamentId
-    )
-        external
-        view
-        returns (
-            string memory name,
-            uint256 entryFee,
-            address tokenAddress,
-            uint256 activePlayers,
-            uint256 maxPlayers,
-            uint256 startTime,
-            uint256 endTime,
-            uint256 joinDeadline,
-            uint256 scoreSubmissionDeadline,
-            uint256 amountInTournament,
-            TournamentStatus status,
-            bool prizesDistributed
-        )
-    {
-        Tournament storage tournament = tournaments[tournamentId];
-        return (
-            tournament.name,
-            tournament.entryFee,
-            tournament.tokenAddress,
-            tournament.activePlayers,
-            tournament.maxPlayers,
-            tournament.startTime,
-            tournament.endTime,
-            tournament.joinDeadline,
-            tournament.scoreSubmissionDeadline,
-            tournament.amountInTournament,
-            tournament.status,
-            tournament.prizesDistributed
-        );
     }
 
     /**
      * @dev Register a new player
      */
     function registerPlayer() external {
-        require(players[msg.sender].playerId == 0, "Player already registered");
+        if (players[msg.sender].playerId != 0) revert PlayerAlreadyRegistered();
 
         uint256 playerId = _nextPlayerId;
-        _nextPlayerId++;
+        ++_nextPlayerId;
 
-        players[msg.sender] = Player({
-            playerId: playerId,
-            playerAddress: msg.sender,
-            totalWinnings: 0,
-            tournamentIds: new uint256[](0)
-        });
+        players[msg.sender] =
+            Player({playerId: playerId, playerAddress: msg.sender, totalWinnings: 0, tournamentIds: new uint256[](0)});
 
         playerIdToAddress[playerId] = msg.sender;
 
@@ -279,14 +211,11 @@ contract TournamentManager is Ownable, ReentrancyGuardTransient {
         uint256 startTime,
         uint256 duration
     ) external onlyOwner {
-        require(maxPlayers > 1, "Max players must be greater than 1");
-        require(
-            startTime > block.timestamp,
-            "Start time must be in the future"
-        );
-
+        if (maxPlayers < 2) revert InvalidMaxPlayers();
+        if (startTime <= block.timestamp) revert InvalidStartTime();
+        // Validate the token address if it's not ETH (address(0))
         uint256 tournamentId = _nextTournamentId;
-        _nextTournamentId++;
+        ++_nextTournamentId;
 
         Tournament storage newTournament = tournaments[tournamentId];
         newTournament.tournamentId = tournamentId;
@@ -295,59 +224,35 @@ contract TournamentManager is Ownable, ReentrancyGuardTransient {
         newTournament.tokenAddress = tokenAddress;
         newTournament.maxPlayers = maxPlayers;
         newTournament.startTime = startTime;
-        newTournament.endTime =
-            startTime +
-            (duration > 0 ? duration : TOURNAMENT_DURATION);
-        newTournament.scoreSubmissionDeadline =
-            newTournament.endTime +
-            SCORE_SUBMISSION_BUFFER;
+        newTournament.endTime = startTime + (duration > 0 ? duration : TOURNAMENT_DURATION);
+        newTournament.scoreSubmissionDeadline = newTournament.endTime + SCORE_SUBMISSION_BUFFER;
         newTournament.status = TournamentStatus.Open;
         newTournament.prizesDistributed = false;
 
-        emit TournamentCreated(
-            tournamentId,
-            name,
-            entryFee,
-            maxPlayers,
-            startTime
-        );
+        emit TournamentCreated(tournamentId, name, entryFee, maxPlayers, startTime);
     }
 
     /**
      * @dev Join a tournament
      */
-    function joinTournament(
-        uint256 tournamentId
-    )
+    function joinTournament(uint256 tournamentId)
         external
         payable
         nonReentrant
         onlyRegisteredPlayer
         tournamentExists(tournamentId)
         tournamentOpen(tournamentId)
+        tournamentNotFull(tournamentId)
     {
         Tournament storage tournament = tournaments[tournamentId];
 
-        require(
-            !tournament.hasJoined[msg.sender],
-            "Already joined this tournament"
-        );
-        require(
-            tournament.activePlayers < tournament.maxPlayers,
-            "Tournament is full"
-        );
-        require(
-            block.timestamp < tournament.startTime,
-            "Join deadline has passed"
-        );
+        require(!tournament.hasJoined[msg.sender], "Already joined this tournament");
+        require(block.timestamp < tournament.startTime, "Join deadline has passed");
 
         uint256 feeToPayPlayer = tournament.entryFee;
 
         // Check if player has a badge for discount
-        if (
-            address(playerBadgeContract) != address(0) &&
-            playerBadgeContract.balanceOf(msg.sender) > 0
-        ) {
+        if (address(playerBadgeContract) != address(0) && playerBadgeContract.balanceOf(msg.sender) > 0) {
             uint8 discount = playerBadgeContract.discountPercentage();
 
             feeToPayPlayer = tournament.entryFee * (100 - discount);
@@ -363,10 +268,7 @@ contract TournamentManager is Ownable, ReentrancyGuardTransient {
         // Check if tournament should start
         if (tournament.activePlayers == tournament.maxPlayers) {
             tournament.status = TournamentStatus.InProgress;
-            emit TournamentStatusChanged(
-                tournamentId,
-                TournamentStatus.InProgress
-            );
+            emit TournamentStatusChanged(tournamentId, TournamentStatus.InProgress);
         }
 
         // Handle payment
@@ -378,15 +280,8 @@ contract TournamentManager is Ownable, ReentrancyGuardTransient {
             require(msg.value == 0, "ETH not accepted for this tournament");
             IERC20 token = IERC20(tournament.tokenAddress);
             // add a check to see if a token exists at this point.
-            require(
-                token.allowance(msg.sender, address(this)) >= feeToPayPlayer,
-                "Token allowance too low"
-            );
-            require(
-                token.transferFrom(msg.sender, address(this), feeToPayPlayer),
-                "Token transfer failed"
-            );
-            //  TODO: multiple tokens might not reuturn true here so use safeTransfer
+            require(token.allowance(msg.sender, address(this)) >= feeToPayPlayer, "Token allowance too low");
+            token.safeTransferFrom(msg.sender, address(this), feeToPayPlayer);
         }
 
         emit PlayerJoinedTournament(tournamentId, msg.sender, feeToPayPlayer);
@@ -395,25 +290,15 @@ contract TournamentManager is Ownable, ReentrancyGuardTransient {
     /**
      * @dev Submit score for a player (admin only)
      */
-    function submitScore(
-        uint256 tournamentId,
-        address playerAddress,
-        uint256 score
-    )
+    function submitScore(uint256 tournamentId, address playerAddress, uint256 score)
         external
         onlyOwner
         tournamentExists(tournamentId)
         tournamentInProgress(tournamentId)
+        playerInTournament(tournamentId, playerAddress)
     {
         Tournament storage tournament = tournaments[tournamentId];
-        require(
-            block.timestamp <= tournament.scoreSubmissionDeadline,
-            "Score submission deadline passed"
-        );
-        require(
-            tournament.hasJoined[playerAddress],
-            "Player not in this tournament"
-        );
+        require(block.timestamp <= tournament.scoreSubmissionDeadline, "Score submission deadline passed");
 
         tournament.playerScores[playerAddress] = score;
 
@@ -459,40 +344,36 @@ contract TournamentManager is Ownable, ReentrancyGuardTransient {
         emit BatchScoresSubmitted(tournamentId, playerAddresses, scores);
     }
 
+
     /**
      * @dev End tournament and calculate winners (admin only)
      */
-    function endTournament(
-        uint256 tournamentId
-    ) external onlyOwner tournamentExists(tournamentId) {
+    function endTournament(uint256 tournamentId)
+        external
+        onlyOwner
+        tournamentExists(tournamentId)
+        tournamentInProgress(tournamentId)
+    {
         Tournament storage tournament = tournaments[tournamentId];
 
-        require(
-            tournament.status == TournamentStatus.InProgress,
-            "Tournament not in progress"
-        );
-        require(
-            block.timestamp >= tournament.endTime,
-            "Tournament not yet ended"
-        );
+        require(block.timestamp >= tournament.endTime, "Tournament not yet ended");
 
         // Get participants and their scores
         // address[] memory participantAddresses = tournament.participants;
         uint256 playerlength = tournament.activePlayers;
         uint256[] memory participantScores = new uint256[](playerlength);
 
-        for (uint256 i = 0; i < playerlength; ) {
-            participantScores[i] = tournament.playerScores[
-                tournament.participants[i]
-            ];
+        for (uint256 i = 0; i < playerlength;) {
+            participantScores[i] = tournament.playerScores[tournament.participants[i]];
             unchecked {
                 i++;
             }
         }
+
         //TODO: Use better sorting techinque or not as there will be only 3 winners, also what if 2 people have same position
         // Sort participants by score (descending)
-        for (uint256 i = 0; i < playerlength; i++) {
-            for (uint256 j = i + 1; j < playerlength; j++) {
+        for (uint256 i = 0; i < playerlength;) {
+            for (uint256 j = i + 1; j < playerlength;) {
                 if (participantScores[i] < participantScores[j]) {
                     // Swap scores
                     uint256 tempScore = participantScores[i];
@@ -504,6 +385,12 @@ contract TournamentManager is Ownable, ReentrancyGuardTransient {
                     tournament.participants[i] = tournament.participants[j];
                     tournament.participants[j] = tempAddr;
                 }
+                unchecked {
+                    j++;
+                }
+            }
+            unchecked {
+                i++;
             }
         }
 
@@ -511,7 +398,7 @@ contract TournamentManager is Ownable, ReentrancyGuardTransient {
         uint256 winnerCount = playerlength >= 3 ? 3 : playerlength;
 
         address[] memory winners = new address[](winnerCount);
-        for (uint256 i = 0; i < winnerCount; ) {
+        for (uint256 i = 0; i < winnerCount;) {
             winners[i] = tournament.participants[i];
             unchecked {
                 i++;
@@ -528,15 +415,10 @@ contract TournamentManager is Ownable, ReentrancyGuardTransient {
     /**
      * @dev Distribute prizes to winners
      */
-    function distributePrizes(
-        uint256 tournamentId
-    ) external onlyOwner nonReentrant tournamentExists(tournamentId) {
+    function distributePrizes(uint256 tournamentId) external onlyOwner nonReentrant tournamentExists(tournamentId) {
         Tournament storage tournament = tournaments[tournamentId];
 
-        require(
-            tournament.status == TournamentStatus.Completed,
-            "Tournament not completed"
-        );
+        require(tournament.status == TournamentStatus.Completed, "Tournament not completed");
         require(!tournament.prizesDistributed, "Prizes already distributed");
 
         uint256 totalPrizePool = tournament.amountInTournament;
@@ -553,28 +435,27 @@ contract TournamentManager is Ownable, ReentrancyGuardTransient {
             prizeAmounts[2] = (totalPrizePool * THIRD_PLACE_PERCENTAGE) / 100;
         }
 
+        tournament.prizesDistributed = true;
         // Send prizes
-        for (uint256 i = 0; i < winners.length; i++) {
+        for (uint256 i = 0; i < winners.length;) {
             if (prizeAmounts[i] > 0) {
                 if (tournament.tokenAddress == address(0)) {
                     // Send ETH
-                    (bool success, ) = payable(winners[i]).call{
-                        value: prizeAmounts[i]
-                    }("");
+                    (bool success,) = payable(winners[i]).call{value: prizeAmounts[i]}("");
                     require(success, "ETH transfer failed");
                 } else {
                     // Send ERC20 tokens
                     IERC20 token = IERC20(tournament.tokenAddress);
-                    // require(token.transfer(winners[i], prizeAmounts[i]), "Token transfer failed");
                     token.safeTransfer(winners[i], prizeAmounts[i]);
                 }
 
                 // Update player's total winnings
                 players[winners[i]].totalWinnings += prizeAmounts[i];
             }
+            unchecked {
+                i++;
+            }
         }
-
-        tournament.prizesDistributed = true;
 
         emit PrizesDistributed(tournamentId, winners, prizeAmounts);
     }
@@ -582,67 +463,51 @@ contract TournamentManager is Ownable, ReentrancyGuardTransient {
     /**
      * @dev Cancel tournament and refund entry fees
      */
-    function cancelTournament(
-        uint256 tournamentId,
-        string memory reason
-    ) external onlyOwner nonReentrant tournamentExists(tournamentId) {
+    function cancelTournament(uint256 tournamentId, string memory reason)
+        external
+        onlyOwner
+        nonReentrant
+        tournamentExists(tournamentId)
+    {
         Tournament storage tournament = tournaments[tournamentId];
 
         require(
-            tournament.status == TournamentStatus.Open ||
-                tournament.status == TournamentStatus.InProgress,
+            tournament.status == TournamentStatus.Open || tournament.status == TournamentStatus.InProgress,
             "Tournament cannot be cancelled"
         );
-        //TODO: Check require statements for refunding eth and token
-        require(
-            !tournament.prizesDistributed,
-            "Cannot cancel after prizes distributed"
-        );
+
+        require(!tournament.prizesDistributed, "Cannot cancel after prizes distributed");
 
         // Update status before processing refunds to prevent reentrancy
         tournament.status = TournamentStatus.Cancelled;
 
         // Process refunds
         uint256 activePlayers = tournament.activePlayers;
-        uint256[] memory refundAmounts = new uint256[](activePlayers);
-
-        // Calculate refund amounts first
-        for (uint256 i = 0; i < activePlayers; i++) {
-            address participant = tournament.participants[i];
-            uint256 refundAmount = tournament.entryFee;
-            if (
-                address(playerBadgeContract) != address(0) &&
-                playerBadgeContract.balanceOf(participant) > 0
-            ) {
-                uint8 discount = playerBadgeContract.discountPercentage();
-
-                refundAmount = (tournament.entryFee * (100 - discount)) / 100;
-            }
-            refundAmounts[i] = refundAmount;
-        }
-
+        uint256 entryFees = tournament.entryFee;
         // Process refunds after all calculations
-        for (uint256 i = 0; i < activePlayers; i++) {
-            if (tournament.tokenAddress == address(0)) {
-                //TODO: Useless if check evry time keep above the loop
-                // Refund ETH
-                (bool success, ) = payable(tournament.participants[i]).call{
-                    value: refundAmounts[i]
-                }("");
+        if (tournament.tokenAddress == address(0)) {
+            // Refund ETH
+            for (uint256 i = 0; i < activePlayers;) {
+                address participant = tournament.participants[i];
+                uint256 refundAmount = getRefundAmountTournament(participant, entryFees);
+                (bool success,) = payable(participant).call{value: refundAmount}("");
                 require(success, "ETH refund failed");
-            } else {
-                // Refund ERC20 tokens
+                unchecked {
+                    i++;
+                }
+            }
+        } else {
+            // Refund ERC20 tokens
+            for (uint256 i = 0; i < activePlayers;) {
+                address participant = tournament.participants[i];
+                uint256 refundAmount = getRefundAmountTournament(participant, entryFees);
                 IERC20 token = IERC20(tournament.tokenAddress);
-                require(
-                    token.transfer(
-                        tournament.participants[i],
-                        refundAmounts[i]
-                    ),
-                    "Token refund failed"
-                );
+                token.safeTransfer(participant, refundAmount);
+                unchecked {
+                    i++;
+                }
             }
         }
-        // dont call tournament.participants twice caches it instead
 
         emit TournamentCancelled(tournamentId, reason);
         emit RefundsProcessed(tournamentId);
@@ -651,52 +516,65 @@ contract TournamentManager is Ownable, ReentrancyGuardTransient {
     /**
      * @dev Auto-cancel tournaments with insufficient players
      */
-    function checkAndCancelIncompleteTournaments(
-        uint256 tournamentId
-    ) external onlyOwner tournamentExists(tournamentId) {
+    function checkAndCancelIncompleteTournaments(uint256 tournamentId)
+        external
+        onlyOwner
+        tournamentOpen(tournamentId)
+        tournamentExists(tournamentId)
+        tournamentNotFull(tournamentId)
+    {
         Tournament storage tournament = tournaments[tournamentId];
 
-        require(
-            tournament.status == TournamentStatus.Open,
-            "Tournament not open"
-        );
-        require(
-            block.timestamp >= tournament.startTime,
-            "Tournament has not reached start time"
-        );
-        require(
-            tournament.activePlayers < tournament.maxPlayers,
-            "Tournament is full"
-        );
+        require(block.timestamp >= tournament.startTime, "Tournament has not reached start time");
 
         // If current time exceeds start time + lobby timeout and lobby not filled, cancel
         if (block.timestamp >= tournament.startTime + LOBBY_TIMEOUT) {
-            this.cancelTournament(
-                tournamentId,
-                "Insufficient players in lobby"
-            );
+            this.cancelTournament(tournamentId, "Insufficient players in lobby");
         }
     }
+
+    function getRefundAmountTournament(address participant, uint256 entryFees)
+        internal
+        view
+        returns (uint256 refundAmount)
+    {
+        if (address(playerBadgeContract) != address(0) && playerBadgeContract.balanceOf(participant) > 0) {
+            uint8 discount = playerBadgeContract.discountPercentage();
+
+            refundAmount = (entryFees * (100 - discount)) / 100;
+        } else {
+            refundAmount = entryFees;
+        }
+    }
+
+    // View Functions
 
     /**
      * @dev Get tournament winners
      */
-    function getTournamentWinners(
-        uint256 tournamentId
-    ) external view tournamentExists(tournamentId) returns (address[] memory) {
+    function getTournamentWinners(uint256 tournamentId)
+        external
+        view
+        tournamentExists(tournamentId)
+        returns (address[] memory)
+    {
         return tournaments[tournamentId].winners;
     }
 
     /**
      * @dev Get tournament participants
      */
-    function getTournamentParticipants(
-        uint256 tournamentId
-    ) external view tournamentExists(tournamentId) returns (address[] memory) {
+    function getTournamentParticipants(uint256 tournamentId)
+        external
+        view
+        tournamentExists(tournamentId)
+        returns (address[] memory)
+    {
         Tournament storage tournament = tournaments[tournamentId];
-        address[] memory participants = new address[](tournament.activePlayers);
+        uint256 activePlayers = tournament.activePlayers;
+        address[] memory participants = new address[](activePlayers);
 
-        for (uint256 i = 0; i < tournament.activePlayers; ) {
+        for (uint256 i = 0; i < activePlayers;) {
             participants[i] = tournament.participants[i];
             unchecked {
                 i++;
@@ -709,55 +587,39 @@ contract TournamentManager is Ownable, ReentrancyGuardTransient {
     /**
      * @dev Get player score in tournament
      */
-    function getPlayerScore(
-        uint256 tournamentId,
-        address playerAddress
-    ) external view tournamentExists(tournamentId) returns (uint256) {
+    function getPlayerScore(uint256 tournamentId, address playerAddress)
+        external
+        view
+        tournamentExists(tournamentId)
+        playerInTournament(tournamentId, playerAddress)
+        returns (uint256)
+    {
         Tournament storage tournament = tournaments[tournamentId];
-        require(
-            tournament.hasJoined[playerAddress],
-            "Player not in this tournament"
-        );
         return tournament.playerScores[playerAddress];
     }
 
     /**
      * @dev Get player's tournament history
      */
-    function getPlayerTournaments(
-        address playerAddress
-    ) external view onlyRegisteredPlayer returns (uint256[] memory) {
+    function getPlayerTournaments(address playerAddress)
+        external
+        view
+        onlyRegisteredPlayer
+        returns (uint256[] memory)
+    {
         return players[playerAddress].tournamentIds;
     }
 
     /**
      * @dev Check if player has joined a tournament
      */
-    function hasPlayerJoined(
-        uint256 tournamentId,
-        address playerAddress
-    ) external view tournamentExists(tournamentId) returns (bool) {
+    function hasPlayerJoined(uint256 tournamentId, address playerAddress)
+        external
+        view
+        tournamentExists(tournamentId)
+        returns (bool)
+    {
         return tournaments[tournamentId].hasJoined[playerAddress];
-    }
-
-    /**
-     * @dev Emergency withdrawal function for contract owner
-     */
-    function emergencyWithdraw(address tokenAddress) external onlyOwner {
-        if (tokenAddress == address(0)) {
-            uint256 balance = address(this).balance;
-            require(balance > 0, "No ETH to withdraw");
-            (bool success, ) = payable(owner()).call{value: balance}("");
-            require(success, "ETH withdrawal failed");
-        } else {
-            IERC20 token = IERC20(tokenAddress);
-            uint256 balance = token.balanceOf(address(this));
-            require(balance > 0, "No tokens to withdraw");
-            require(
-                token.transfer(owner(), balance),
-                "Token withdrawal failed"
-            );
-        }
     }
 
     /**
@@ -765,18 +627,24 @@ contract TournamentManager is Ownable, ReentrancyGuardTransient {
      */
     function getOpenTournaments() external view returns (uint256[] memory) {
         uint256 count = 0;
-        for (uint256 i = 1; i < _nextTournamentId; i++) {
+        for (uint256 i = 1; i < _nextTournamentId; ) {
             if (tournaments[i].status == TournamentStatus.Open) {
-                count++;
+                unchecked {
+                    count++;
+                    i++;
+                }
             }
         }
 
         uint256[] memory openIds = new uint256[](count);
         uint256 index = 0;
-        for (uint256 i = 1; i < _nextTournamentId; i++) {
+        for (uint256 i = 1; i < _nextTournamentId; ) {
             if (tournaments[i].status == TournamentStatus.Open) {
                 openIds[index] = i;
-                index++;
+                unchecked {
+                    index++;
+                    i++;
+                }
             }
         }
 
@@ -786,24 +654,26 @@ contract TournamentManager is Ownable, ReentrancyGuardTransient {
     /**
      * @dev Get all in-progress tournaments
      */
-    function getInProgressTournaments()
-        external
-        view
-        returns (uint256[] memory)
-    {
+    function getInProgressTournaments() external view returns (uint256[] memory) {
         uint256 count = 0;
-        for (uint256 i = 1; i < _nextTournamentId; i++) {
+        for (uint256 i = 1; i < _nextTournamentId; ) {
             if (tournaments[i].status == TournamentStatus.InProgress) {
-                count++;
+                unchecked {
+                    count++;
+                    i++;
+                }
             }
         }
 
         uint256[] memory inProgressIds = new uint256[](count);
         uint256 index = 0;
-        for (uint256 i = 1; i < _nextTournamentId; i++) {
+        for (uint256 i = 1; i < _nextTournamentId; ) {
             if (tournaments[i].status == TournamentStatus.InProgress) {
                 inProgressIds[index] = i;
-                index++;
+                unchecked {
+                    index++;
+                    i++;
+                }
             }
         }
 
@@ -813,24 +683,26 @@ contract TournamentManager is Ownable, ReentrancyGuardTransient {
     /**
      * @dev Get all completed tournaments
      */
-    function getCompletedTournaments()
-        external
-        view
-        returns (uint256[] memory)
-    {
+    function getCompletedTournaments() external view returns (uint256[] memory) {
         uint256 count = 0;
-        for (uint256 i = 1; i < _nextTournamentId; i++) {
+        for (uint256 i = 1; i < _nextTournamentId;) {
             if (tournaments[i].status == TournamentStatus.Completed) {
-                count++;
+                unchecked {
+                    count++;
+                    i++;
+                }
             }
         }
 
         uint256[] memory completedIds = new uint256[](count);
         uint256 index = 0;
-        for (uint256 i = 1; i < _nextTournamentId; i++) {
+        for (uint256 i = 1; i < _nextTournamentId;) {
             if (tournaments[i].status == TournamentStatus.Completed) {
                 completedIds[index] = i;
-                index++;
+                unchecked {
+                    index++;
+                    i++;
+                }
             }
         }
 
@@ -841,9 +713,7 @@ contract TournamentManager is Ownable, ReentrancyGuardTransient {
      * @dev Get extended tournament details including game type and image
      * This is a new getter that includes game type and image URI
      */
-    function getExtendedTournamentDetails(
-        uint256 tournamentId
-    )
+    function getExtendedTournamentDetails(uint256 tournamentId)
         external
         view
         tournamentExists(tournamentId)
@@ -878,25 +748,15 @@ contract TournamentManager is Ownable, ReentrancyGuardTransient {
     /**
      * @dev Get player details
      */
-    function getPlayerDetails(
-        address playerAddress
-    )
+    function getPlayerDetails(address playerAddress)
         external
         view
-        returns (
-            uint256 playerId,
-            uint256 totalWinnings,
-            uint256 tournamentCount
-        )
+        returns (uint256 playerId, uint256 totalWinnings, uint256 tournamentCount)
     {
         Player storage player = players[playerAddress];
         require(player.playerId != 0, "Player not registered");
 
-        return (
-            player.playerId,
-            player.totalWinnings,
-            player.tournamentIds.length
-        );
+        return (player.playerId, player.totalWinnings, player.tournamentIds.length);
     }
 
     /**
@@ -909,33 +769,68 @@ contract TournamentManager is Ownable, ReentrancyGuardTransient {
     /**
      * @dev Check if player is registered
      */
-    function isPlayerRegistered(
-        address playerAddress
-    ) external view returns (bool) {
+    function isPlayerRegistered(address playerAddress) external view returns (bool) {
         return players[playerAddress].playerId != 0;
     }
 
     /**
      * @dev Calculate discounted entry fee for a player
      */
-    function getDiscountedEntryFee(
-        uint256 tournamentId,
-        address playerAddress
-    ) external view tournamentExists(tournamentId) returns (uint256) {
+    function getDiscountedEntryFee(uint256 tournamentId, address playerAddress)
+        external
+        view
+        tournamentExists(tournamentId)
+        returns (uint256)
+    {
         Tournament storage tournament = tournaments[tournamentId];
         uint256 entryFee = tournament.entryFee;
 
         // Check if player has a badge for discount
         if (
-            address(playerBadgeContract) != address(0) &&
-            playerAddress != address(0) &&
-            playerBadgeContract.balanceOf(playerAddress) > 0
+            address(playerBadgeContract) != address(0) && playerAddress != address(0)
+                && playerBadgeContract.balanceOf(playerAddress) > 0
         ) {
             uint8 discount = playerBadgeContract.discountPercentage();
             return (entryFee * (100 - discount)) / 100;
         }
 
         return entryFee;
+    }
+
+    // Getter function for tournament details to help with testing
+    function getTournamentDetails(uint256 tournamentId)
+        external
+        view
+        returns (
+            string memory name,
+            uint256 entryFee,
+            address tokenAddress,
+            uint256 activePlayers,
+            uint256 maxPlayers,
+            uint256 startTime,
+            uint256 endTime,
+            uint256 joinDeadline,
+            uint256 scoreSubmissionDeadline,
+            uint256 amountInTournament,
+            TournamentStatus status,
+            bool prizesDistributed
+        )
+    {
+        Tournament storage tournament = tournaments[tournamentId];
+        return (
+            tournament.name,
+            tournament.entryFee,
+            tournament.tokenAddress,
+            tournament.activePlayers,
+            tournament.maxPlayers,
+            tournament.startTime,
+            tournament.endTime,
+            tournament.joinDeadline,
+            tournament.scoreSubmissionDeadline,
+            tournament.amountInTournament,
+            tournament.status,
+            tournament.prizesDistributed
+        );
     }
 
     /**
